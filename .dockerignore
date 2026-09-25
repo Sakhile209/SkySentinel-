@@ -1,0 +1,10 @@
+.git
+.idea
+.agents
+.codex
+.env
+.env.*
+**/node_modules
+**/target
+**/dist
+docs

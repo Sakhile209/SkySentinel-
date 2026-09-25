@@ -1,794 +1,298 @@
-# 🛡️ SkySentinel Security
+# SkySentinel Security
 
-> **See sooner. Respond smarter.**
+**See sooner. Respond smarter.**
 
-SkySentinel Security is a **drone-assisted security operations platform** designed to help private security companies manage incidents, panic alerts, response teams, protected sites, and optional drone observation from one centralized control room.
+A centralized Security Operations Centre platform for private security companies.
+SkySentinel brings alerts, protected sites, human response and optional,
+human-authorized drone observation into one operational view.
 
-The platform combines traditional security response with modern situational-awareness technology while keeping **human operators in control of operational decisions**.
+Guards and patrol officers often know where an alarm originated without knowing
+what is happening there. The project's goal is to improve coordination and
+situational awareness while keeping operators responsible for decisions.
 
----
+## Current status
 
-## 📌 Problem Statement
+**Phase 1 foundation only.** Implemented: Spring Boot health API, PostgreSQL
+connection and Flyway baseline, React dashboard preview with live backend health, Docker configuration,
+and automated foundation tests. Authentication, tenants and operational features
+are not implemented. This is a local development configuration, not a production
+security platform. See [verification record](docs/phase-1.md).
 
-Private security companies commonly rely on security guards, patrol vehicles, motorcycles, panic buttons, alarms, and fixed CCTV cameras.
+The existing project description is preserved in [project-brief.md](docs/project-brief.md).
+The [approved dashboard screenshot](docs/design/approved-dashboard.png) is the
+visual source of truth for Phase 8. At your request, the frontend now brings forward the approved dashboard layout as
+a demo preview. It includes selectable incidents, an illustrative map, detail tabs,
+fleet/team panels and a camera placeholder. Only backend health uses the real API;
+operational actions remain disabled until their tested backend phases.
 
-When an incident occurs, the control room may know **where an alert came from**, but may not immediately know **what is happening at the location**.
+## Architecture and stack
 
-This can result in response teams travelling toward an incident with limited situational information.
+```mermaid
+flowchart LR
+  Browser[React browser client] --> Proxy[Vite dev proxy / Nginx container]
+  Proxy --> Controller[Spring REST controller]
+  Controller --> Service[Health service]
+  Service --> DB[(PostgreSQL)]
+  Flyway[Flyway migrations] --> DB
+```
 
-Fixed CCTV cameras may also have blind spots or may not provide the required view of an incident.
+Java 21, Spring Boot 3.5.16, Maven, Spring Web, Spring Data JPA, Spring Security,
+validation, Flyway and PostgreSQL 17. React 19 and Vite provide the frontend.
+JUnit 5, Mockito, Spring Boot Test, Testcontainers, Vitest and Testing Library
+provide tests. Docker Compose runs the complete local stack.
 
-**SkySentinel Security aims to improve situational awareness and incident coordination by bringing alerts, human response teams, protected sites, and optional drone observation into one security operations platform.**
+Future domain features follow `controller → service → repository → PostgreSQL`.
+Controllers receive and return DTOs, never JPA entities. The foundation service
+uses `JdbcTemplate` for `SELECT 1`; a domain repository is unnecessary for this
+connectivity probe. [Architecture](docs/architecture.md) · [API](docs/api.md) ·
+[planned ERD](docs/erd.md).
 
----
+## Repository layout
 
-## 🎯 Project Goal
-
-The goal of SkySentinel is to provide security companies with a centralized **Security Operations Centre dashboard** where operators can:
-
-- Receive panic and alarm events
-- Monitor active incidents
-- View protected sites on a map
-- Acknowledge incidents
-- Dispatch security response teams
-- Monitor response-team status
-- Manage drone bases
-- Monitor drone availability
-- Create human-authorized observation missions
-- View drone telemetry
-- Manage evidence
-- Review incident history
-- Generate reports
-- Maintain an audit trail
-
-SkySentinel is not intended to replace security officers.
-
-The platform is designed to **support human security teams with better information and coordination**.
-
----
-
-## 🖥️ Security Operations Centre
-
-The main SkySentinel dashboard provides one operational view of the security environment.
+The project and Compose name are `skysentinel-security`; the existing checkout
+folder remains `SkySentinel-`.
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│                 SKYSENTINEL SECURITY                        │
-│              SECURITY OPERATIONS CENTRE                     │
-├──────────────────────────────────────────────────────────────┤
-│ Active       Drones       Missions      Response      Sites │
-│ Incidents    Available    Active        Teams               │
-├──────────────┬──────────────────────────┬────────────────────┤
-│              │                          │                    │
-│    LIVE      │        LIVE MAP          │ SELECTED INCIDENT  │
-│  INCIDENTS   │                          │                    │
-│              │   🚁   🔴   🚓   🏭     │ Acknowledge        │
-│              │                          │ Create Mission     │
-│              │                          │ Dispatch Team      │
-├──────────────┼──────────────┬───────────┼────────────────────┤
-│ DRONE FLEET  │ MISSIONS     │ RESPONSE  │ LIVE DRONE FEED    │
-│              │              │ TEAMS     │                    │
-├──────────────┴──────────────┴───────────┴────────────────────┤
-│ Activity      Alerts       Weather        Quick Actions      │
-└──────────────────────────────────────────────────────────────┘
+backend/
+  pom.xml
+  Dockerfile
+  src/main/java/com/skysentinel/security/
+    SkySentinelApplication.java
+    config/SecurityConfig.java
+    health/HealthController.java
+    health/HealthService.java
+    health/HealthResponse.java
+  src/main/resources/application.yml
+  src/test/java/com/skysentinel/security/health/
+    HealthServiceTest.java
+    HealthControllerTest.java
+    HealthIntegrationIT.java
+frontend/
+  Dockerfile
+  nginx.conf
+  package.json
+  package-lock.json
+  vite.config.js
+  index.html
+  src/{main.jsx,App.jsx,styles.css,App.test.jsx,test-setup.js}
+database/
+  migrations/V1__foundation.sql
+  seed/README.md
+docs/
+  architecture.md
+  api.md
+  erd.md
+  phase-1.md
+  project-brief.md
+  design/approved-dashboard.png
+docker-compose.yml
+.env.example
+.gitignore
+.dockerignore
+README.md
 ```
 
----
+## Ubuntu/Linux: run with Docker
 
-## 🚨 Incident Workflow
+Prerequisites: Git, OpenSSL, Docker Engine or Docker Desktop **running**, and the
+Docker Compose plugin. Check:
 
-A typical SkySentinel incident follows this workflow:
-
-```text
-Panic Button / Alarm / Manual Report
-                 │
-                 ▼
-         SkySentinel API
-                 │
-                 ▼
-         Incident Created
-                 │
-                 ▼
-       Control Room Alerted
-                 │
-                 ▼
-      Operator Acknowledges
-                 │
-          ┌──────┴──────┐
-          │             │
-          ▼             ▼
-   Dispatch Team    Check Available
-        🚓           Drone Resources
-                          🚁
-                          │
-                          ▼
-                Operator Authorizes
-                 Observation Mission
-                          │
-                          ▼
-                  Live Telemetry
-                          │
-          ┌───────────────┘
-          ▼
-     Incident Updated
-          │
-          ▼
-       Resolved
-          │
-          ▼
- Report + Audit History
+```bash
+cd /home/wtc/Documents/SkySentinel-
+docker info
+docker compose version
 ```
 
-A panic event **does not automatically launch a drone**.
+For a different checkout, change the `cd` path. Create your local secrets file
+once (do not overwrite an existing `.env`):
 
-The control-room operator first reviews the incident and determines the appropriate response.
-
----
-
-## 🚁 Hybrid Drone Deployment
-
-SkySentinel supports different drone deployment models.
-
-### Shared Drone Base
-
-Multiple nearby protected sites can be associated with a shared drone base where such an operating model is technically and operationally appropriate.
-
-```text
-Warehouse A ──┐
-              │
-Warehouse B ──┼──── 🚁 Shared Drone Base
-              │
-Warehouse C ──┘
+```bash
+cp -n .env.example .env
+chmod 600 .env
+# Prints a fresh local password; paste it into POSTGRES_PASSWORD in .env.
+openssl rand -hex 32
+nano .env
 ```
 
-### Dedicated Drone Base
+No default password is supplied. `.env` is ignored by Git. Never paste real
+credentials into issue reports or commit them. Start all services:
 
-Large or high-priority facilities can have dedicated drone resources.
-
-```text
-Large Facility
-      │
-      └──── 🚁 Dedicated Drone Base
+```bash
+docker compose up --build -d --wait --wait-timeout 240
+docker compose ps
+curl -i http://localhost:8080/api/health
+curl -i http://localhost:5173/api/health
 ```
 
-### No-Drone Site
+Expected: all three services become healthy, both requests return HTTP 200 with
+`{"status":"UP","service":"skysentinel-security","database":"UP"}`.
+Open **http://localhost:5173**. The dashboard should show **System status: Online** and
+**Connected — backend and database healthy** in System Alerts. The second curl proves the frontend
+proxy reaches the API. The ports are bound to localhost only.
 
-A protected site does not need drone coverage to use SkySentinel.
-
-```text
-Protected Site
-      │
-      ▼
-   Incident
-      │
-      ▼
-Control Room
-      │
-      ▼
-🚓 Response Team
+```bash
+# Diagnose startup problems (redact sensitive values before sharing logs).
+docker compose logs --tail=100 backend postgres frontend
+# Stop services; database data remains in the named volume.
+docker compose down
 ```
 
-This allows SkySentinel to support a **hybrid security model** instead of requiring every customer site to have its own drone.
+Do not use `down -v` unless you intend to delete local database data. Changing
+`.env` after the database volume exists does not change the database user's
+password; keep the original password or deliberately rotate it in PostgreSQL.
 
----
+## Ubuntu/Linux: develop with hot reload
 
-## 🗺️ Operational Areas
+Requires JDK 21, Maven 3.9+, Node 22.12+ (Node 22 LTS recommended), npm and Docker.
+On Ubuntu versions with OpenJDK 21 packages:
 
-SkySentinel groups protected sites and drone resources into **Operational Areas**.
-
-Example:
-
-```text
-Industrial Area North
-│
-├── Warehouse A
-├── Warehouse B
-├── Warehouse C
-│
-└── Drone Base DB-001
-    ├── SS-001
-    └── SS-002
+```bash
+sudo apt update
+sudo apt install openjdk-21-jdk maven
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+export PATH="$JAVA_HOME/bin:$PATH"
+java -version
+mvn -version
+node --version
+npm --version
 ```
 
-The software does not assume that every drone can operate within a fixed distance.
+Use your installed JDK 21 path if it differs. First create `.env` as above.
+Do not run the containerized backend/frontend on the same ports as the local apps.
 
-Actual real-world drone operations depend on factors such as aircraft capability, communications, environment, weather, airspace, and applicable operational authorization.
+Terminal 1, repository root:
 
----
-
-## 🚁 Drone Simulation
-
-Physical drones are **not required for the first MVP**.
-
-SkySentinel initially uses a simulated drone provider.
-
-Example lifecycle:
-
-```text
-AVAILABLE
-    ↓
-TAKING_OFF
-    ↓
-IN_FLIGHT
-    ↓
-OBSERVING
-    ↓
-RETURNING
-    ↓
-LANDED
-    ↓
-AVAILABLE
+```bash
+docker compose up -d --wait postgres
+set -a
+source .env
+set +a
+export DB_URL="jdbc:postgresql://localhost:${POSTGRES_PORT}/${POSTGRES_DB}"
+export DB_USERNAME="$POSTGRES_USER"
+export DB_PASSWORD="$POSTGRES_PASSWORD"
+export SERVER_PORT="$BACKEND_PORT"
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn -f backend/pom.xml spring-boot:run
 ```
 
-Simulated telemetry can include:
+Only source your own trusted `.env` file; this command executes shell syntax.
+Expected backend log: `Started SkySentinelApplication`. Flyway creates its
+schema-history table and applies migration 1. There are no domain tables yet.
+Spring does not read the root `.env` automatically; the exported variables make
+the settings available to the local Java process.
 
-```text
-Drone ID
-Status
-Battery
-Latitude
-Longitude
-Altitude
-Speed
+Terminal 2:
+
+```bash
+cd /home/wtc/Documents/SkySentinel-/frontend
+npm ci
+npm run dev
 ```
 
-This allows the complete software workflow to be developed and demonstrated before integrating physical drone hardware.
+Open the URL printed by Vite (normally http://localhost:5173). If the backend
+port changed, use `API_PROXY_TARGET=http://127.0.0.1:YOUR_PORT npm run dev`.
+The browser requests `/api/health` on its own origin; the development proxy
+forwards it to Spring Boot, so broad CORS access is unnecessary.
 
----
+## Tests
 
-## 🔌 Hardware-Independent Architecture
+From the repository root:
 
-SkySentinel uses a drone abstraction layer.
-
-```text
-SkySentinel
-     │
-     ▼
-Mission Service
-     │
-     ▼
-DroneProvider
-     │
- ┌───┴────────────────┐
- │                    │
- ▼                    ▼
-Simulator        Future Supported
-Provider          Drone Adapter
+```bash
+# Fast Java service and MVC tests: no database or Docker required.
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn -f backend/pom.xml test
+# Full Java verification: includes a real temporary PostgreSQL container.
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn -f backend/pom.xml verify
+# Frontend states and production bundle.
+npm --prefix frontend ci
+npm --prefix frontend test
+npm --prefix frontend run build
+# Check Compose syntax without printing resolved secrets.
+docker compose config --quiet
 ```
 
-The MVP uses:
+`verify` requires a running Docker daemon and fails if Docker is unavailable;
+it does not silently skip the database integration test. If using Docker Desktop
+and Testcontainers cannot discover it, set
+`export DOCKER_HOST="$(docker context inspect --format '{{.Endpoints.docker.Host}}')"`
+first. Tests use temporary database credentials, independent of `.env`.
 
-```text
-SimulatedDroneProvider
+Expected: Maven `BUILD SUCCESS`, frontend tests passing, Vite `built in ...`.
+See [phase acceptance checks](docs/phase-1.md) for manual success and failure cases.
+
+## API and Postman
+
+Public foundation readiness check: `GET /api/health`. It performs a database
+query and returns HTTP 200 for healthy connectivity or HTTP 503 if the running
+application loses database access. A backend unable to connect at startup fails
+startup instead. No credentials, locations or SQL errors are returned.
+
+In Postman: create a GET request to `http://localhost:8080/api/health`, choose
+**No Auth**, and send. Future endpoints are denied by default; there is no login
+or registration in Phase 1. See [API contract](docs/api.md).
+
+## Product rules and deployment models
+
+- **Shared base:** one configured base may support several nearby sites inside
+  approved operational areas.
+- **Dedicated base:** a site can have its own base and resources.
+- **No-drone site:** panic, incidents and human response operate normally.
+
+No fixed flight radius will be hard-coded. The planned demo includes Industrial
+Area North with Warehouses A/B/C, DB-001 and simulated SS-001/SS-002; Facility D
+with DB-002/SS-003; Site E without drone coverage; and PB-WH-002 at Warehouse B.
+These fixtures are planned, not seeded in Phase 1.
+
+Planned workflow:
+
+```mermaid
+flowchart LR
+  Alert[Panic / alarm / manual report] --> Incident[Create incident and notify control room]
+  Incident --> Ack[Operator acknowledges]
+  Ack --> Assess[Assess resources]
+  Assess --> Response[Dispatch human response]
+  Assess --> Mission[Explicitly authorize observation mission]
+  Response --> Track[Track progress]
+  Mission --> Track
+  Track --> Resolve[Resolve incident]
+  Resolve --> History[Preserve evidence metadata, history and audit]
 ```
 
-Future supported drone or docking-station integrations can implement the same interface.
-
----
-
-## 👥 User Roles
-
-### Administrator
-
-Manages:
-
-- Users
-- Sites
-- Operational areas
-- Panic buttons
-- Drone bases
-- Drones
-- Permissions
-
-### Control Room Operator
-
-Responsible for:
-
-- Monitoring incidents
-- Acknowledging incidents
-- Viewing the live map
-- Dispatching response teams
-- Creating authorized observation missions
-- Monitoring active operations
-
-### Drone Operator
-
-Responsible for authorized drone observation missions and mission status.
-
-### Response Officer
-
-Receives dispatch information and updates response status.
-
----
-
-## 🧱 Core Domain Model
-
-The main entities include:
-
-```text
-SecurityCompany
-UserAccount
-OperationalArea
-Site
-PanicButton
-Incident
-DroneBase
-Drone
-Mission
-Response
-Evidence
-AuditLog
-```
-
-Simplified relationship:
-
-```text
-SECURITY COMPANY
-       │
-       ├──── USERS
-       │
-       ├──── OPERATIONAL AREAS
-       │          │
-       │          ├──── SITES
-       │          │       │
-       │          │       ├── PANIC BUTTONS
-       │          │       └── INCIDENTS
-       │          │
-       │          └──── DRONE BASES
-       │                    │
-       │                    └── DRONES
-       │
-       └─────────────────────────┐
-                                 ▼
-                             INCIDENT
-                                 │
-                   ┌─────────────┼─────────────┐
-                   ▼             ▼             ▼
-                MISSION       RESPONSE      EVIDENCE
-                   │
-                   ▼
-                 DRONE
-```
-
----
-
-## 🛠️ Technology Stack
-
-### Backend
-
-- Java 21
-- Spring Boot
-- Spring Web
-- Spring Data JPA
-- Spring Security
-- Maven
-
-### Frontend
-
-- React
-- HTML
-- CSS
-- JavaScript
-
-### Database
-
-- PostgreSQL
-
-### Testing
-
-- JUnit 5
-- Mockito
-- Spring Boot Test
-- Testcontainers where appropriate
-
-### DevOps
-
-- Docker
-- Docker Compose
-- Git
-- CI/CD
-
----
-
-## 🏗️ Application Architecture
-
-```text
-React Frontend
-      │
-      │ HTTPS / REST
-      ▼
-Spring Boot API
-      │
-      ▼
-Controllers
-      │
-      ▼
-Services
-      │
-      ├──── Incident Service
-      ├──── Mission Service
-      ├──── Drone Service
-      └──── Response Service
-      │
-      ▼
-Repositories
-      │
-      ▼
-PostgreSQL
-```
-
-DTOs are used for API requests and responses instead of exposing database entities directly.
-
----
-
-## 📡 Planned API
-
-Examples:
-
-```http
-POST /api/auth/login
-
-POST /api/panic-events
-
-GET  /api/incidents
-GET  /api/incidents/{id}
-POST /api/incidents
-
-PATCH /api/incidents/{id}/acknowledge
-PATCH /api/incidents/{id}/resolve
-
-GET  /api/operational-areas
-
-GET  /api/sites
-
-GET  /api/drone-bases
-POST /api/drone-bases
-
-GET  /api/drones
-POST /api/drones
-
-GET  /api/missions
-POST /api/missions
-
-PATCH /api/missions/{id}/start
-PATCH /api/missions/{id}/complete
-
-POST  /api/responses
-PATCH /api/responses/{id}/dispatch
-PATCH /api/responses/{id}/complete
-```
-
----
-
-## 🚨 Example Panic Event
-
-```http
-POST /api/panic-events
-```
-
-Example request:
-
-```json
-{
-  "deviceCode": "PB-WH-002",
-  "event": "PANIC"
-}
-```
-
-SkySentinel will identify the registered panic button and protected site and create an incident.
-
-The incident then appears in the Security Operations Centre.
-
----
-
-## 🔐 Security
-
-SkySentinel is being designed with:
-
-- Authentication
-- Role-based access control
-- Secure password hashing
-- Input validation
-- Company/tenant data separation
-- Audit logging
-- Environment-based secret management
-- HTTPS-ready configuration
-- Protected evidence references
-- Controlled access to sensitive location information
-
----
-
-## 🧪 Testing Strategy
-
-SkySentinel follows an acceptance-test-oriented development approach.
-
-Example scenario:
-
-```text
-GIVEN
-
-Warehouse B is registered
-PB-WH-002 belongs to Warehouse B
-Drone SS-001 is available
-Response Team 03 is available
-
-WHEN
-
-PB-WH-002 sends a PANIC event
-
-THEN
-
-A HIGH-priority incident is created
-and displayed to the control room.
-
-WHEN
-
-The operator acknowledges the incident
-
-THEN
-
-The incident becomes ACKNOWLEDGED.
-
-WHEN
-
-the operator explicitly creates
-an observation mission
-
-THEN
-
-an eligible simulated drone can
-be assigned to the mission.
-
-AND
-
-a security response team can
-also be dispatched.
-```
-
----
-
-## 📁 Planned Repository Structure
-
-```text
-skysentinel-security/
-│
-├── backend/
-│   ├── src/
-│   ├── pom.xml
-│   └── Dockerfile
-│
-├── frontend/
-│   ├── src/
-│   ├── package.json
-│   └── Dockerfile
-│
-├── database/
-│   ├── migrations/
-│   └── seed/
-│
-├── docs/
-│   ├── architecture/
-│   ├── api/
-│   ├── database/
-│   └── diagrams/
-│
-├── docker-compose.yml
-├── .env.example
-├── .gitignore
-└── README.md
-```
-
----
-
-## 🗺️ Development Roadmap
-
-### Phase 1 — Foundation
-
-Set up:
-
-- Git repository
-- Spring Boot
-- React
-- PostgreSQL
-- Docker
-- Docker Compose
-
-### Phase 2 — Authentication
-
-Implement:
-
-- Users
-- Roles
-- Login
-- Spring Security
-- Authorization
-
-### Phase 3 — Security Infrastructure
-
-Implement:
-
-- Operational areas
-- Sites
-- Panic buttons
-- Drone bases
-
-### Phase 4 — Incident Management
-
-Implement the first complete workflow:
-
-```text
-Panic
-   ↓
-Incident
-   ↓
-Database
-   ↓
-Control Room
-   ↓
-Acknowledge
-```
-
-### Phase 5 — Drone Management
-
-Implement:
-
-- Drone fleet
-- Drone status
-- Battery information
-- Simulated drone provider
-- Simulated telemetry
-
-### Phase 6 — Missions
-
-Implement:
-
-- Mission creation
-- Drone assignment
-- Mission status
-- Observation workflow
-
-### Phase 7 — Response Teams
-
-Implement:
-
-- Response teams
-- Dispatch
-- On-scene status
-- Completion
-
-### Phase 8 — Security Operations Dashboard
-
-Build the full SkySentinel dashboard.
-
-### Phase 9 — Live Operations
-
-Add:
-
-- Live map
-- Real-time incident updates
-- Drone telemetry
-- Response-team updates
-
-### Phase 10 — Evidence & Reporting
-
-Add:
-
-- Evidence metadata
-- Incident history
-- Audit logs
-- Reports
-
-### Phase 11 — Deployment
-
-Add:
-
-- Docker production configuration
-- CI/CD
-- Cloud deployment
-- Monitoring
-- Backups
-
-### Phase 12 — Real Drone Integration
-
-Only after the software MVP has been validated:
-
-- Evaluate supported enterprise drones
-- Evaluate docking stations
-- Integrate supported APIs/SDKs
-- Integrate telemetry
-- Integrate supported video workflows
-
----
-
-## 🎬 Demo Scenario
-
-The first SkySentinel demonstration will simulate:
-
-```text
-Industrial Area North
-│
-├── Warehouse A
-├── Warehouse B
-├── Warehouse C
-│
-└── 🚁 Shared Drone Base DB-001
-    ├── SS-001
-    └── SS-002
-
-High-Risk Facility D
-│
-└── 🚁 Dedicated Drone Base DB-002
-    └── SS-003
-
-Site E
-└── 🚓 Conventional response only
-```
-
-During the demo:
-
-```text
-Warehouse B Panic Button
-          ↓
-SkySentinel
-          ↓
-Incident Created
-          ↓
-Operator Acknowledges
-          ↓
-     ┌────┴────┐
-     ▼         ▼
-🚓 Response   🚁 Observation
-   Team          Mission
-     │              │
-     └──────┬───────┘
-            ▼
-      Incident Resolved
-            ↓
-      Report + History
-```
-
----
-
-## 🚧 Project Status
-
-**Status: In Development**
-
-Current focus:
-
-```text
-Foundation
-   ↓
-Database
-   ↓
-Incident Management
-   ↓
-Drone Simulation
-   ↓
-Operations Dashboard
-```
-
-The first version uses simulated drones and demo security sites.
-
-Physical drone integration is planned for a later stage after the software workflow has been validated.
-
----
-
-## ⚠️ Important Note
-
-SkySentinel is currently a **software development and demonstration project**.
-
-Any future real-world drone deployment would need to account for the selected aircraft, communications, operating environment, airspace, privacy, security procedures, and applicable regulatory/operational requirements.
-
-Demo operational areas and distances should therefore not be interpreted as approved real-world flight coverage.
-
----
-
-## 🚀 Vision
-
-SkySentinel's long-term vision is to give security companies a modern platform that combines:
-
-**Human security teams + incident management + real-time information + optional drone observation**
-
-into one operational environment.
-
-> **SkySentinel Security — See sooner. Respond smarter.**
+An alert must never automatically launch a drone. A manufacturer-neutral
+`DroneProvider` contract and initial `SimulatedDroneProvider` are planned.
+Simulation will represent take-off, flight, observation, return and landing with
+demo telemetry. It is software demonstration, not real flight control.
+
+Planned roles: ADMIN manages configuration/users/resources; CONTROL_OPERATOR
+monitors, acknowledges, dispatches and authorizes missions; DRONE_OPERATOR handles
+authorized missions; RESPONSE_OFFICER receives dispatches and updates progress.
+Tenant isolation and secure password hashing arrive with Phase 2.
+
+## Roadmap
+
+1. **Foundation:** repository, backend, frontend, PostgreSQL and Docker — current step.
+2. Users, authentication, RBAC and tenant isolation.
+3. Operational areas, sites, panic buttons and drone bases.
+4. Panic → incident → operator acknowledgement.
+5. Drone fleet and simulator.
+6. Human-authorized missions.
+7. Human response teams.
+8. Approved dashboard UI.
+9. Map and real-time updates.
+10. Evidence metadata, audit and reports.
+11. Production Docker configuration, HTTPS deployment, CI/CD and security review.
+12. Evaluate supported hardware integrations only after the MVP works.
+
+Each phase starts with expected behaviour, adds tests, and pauses for your test
+result. Evidence/video binaries will use protected external storage; PostgreSQL
+will hold metadata and protected references only.
+
+## Safety and real-world deployment
+
+SkySentinel is a security operations platform; guards and response teams remain
+essential. No autonomous enforcement, weaponization, autonomous pursuit,
+facial-recognition requirement or AI crime prediction is planned. Real drone
+operations require suitable hardware, approved operational areas, authorized
+personnel and applicable approvals. Local demos do not establish flight coverage.
+Production deployment also requires authentication, tenant isolation, HTTPS,
+secret management, backups and the planned security review. No real sensitive
+operational data should be added to this Phase 1 foundation.

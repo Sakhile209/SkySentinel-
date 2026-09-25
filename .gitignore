@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+**/target/
+**/node_modules/
+**/dist/
+**/coverage/
+.idea/
+*.iml
+*.log
+.DS_Store

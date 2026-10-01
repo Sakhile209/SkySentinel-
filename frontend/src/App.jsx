@@ -1,16 +1,86 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Icon from './components/Icon.jsx';
 import Panel from './components/Panel.jsx';
 import OperationsMap from './components/OperationsMap.jsx';
 import DemoFeed from './components/DemoFeed.jsx';
 import { incidents, drones, teams } from './data/demo.js';
 
+const AUTH_STORAGE_KEY = 'skysentinel.auth';
 const navigation = [['Dashboard','dashboard','dashboard'],['Live Map','map','map'],['Incidents','alert','incidents'],['Drones','drone','fleet'],['Missions','mission','missions'],['Response Teams','team','teams'],['Sites','site'],['Panic Buttons','pin'],['Users','team'],['Reports','report'],['Evidence','evidence'],['Audit Log','report'],['Settings','settings']];
 const badgeColor = value => ['HIGH','NEW'].includes(value) ? 'red' : ['MEDIUM','CHARGING','DISPATCHED'].includes(value) ? 'amber' : ['AVAILABLE','COMPLETED','LOW'].includes(value) ? 'green' : 'cyan';
 function Badge({ value }) { return <span className={`badge ${badgeColor(value)}`}>{value.replaceAll('_',' ')}</span>; }
 function Stat({ icon, title, value, detail, color = 'cyan' }) { return <article className="stat"><span className={`stat-icon ${color}`}><Icon name={icon} size={29}/></span><div><h2>{title}</h2><strong>{value}</strong><small className={color}>{detail}</small></div></article>; }
 
+function loadStoredAuth() {
+  try {
+    const stored = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+function AuthenticationScreen({ onAuthenticated }) {
+  const [mode, setMode] = useState('login');
+  const [form, setForm] = useState({ fullName: '', email: '', password: '', badgeNumber: '' });
+  const [status, setStatus] = useState('idle');
+  const [error, setError] = useState('');
+  const isRegistering = mode === 'register';
+  const update = event => setForm(value => ({ ...value, [event.target.name]: event.target.value }));
+  const submit = async event => {
+    event.preventDefault();
+    setStatus('submitting');
+    setError('');
+    try {
+      const body = isRegistering
+        ? { fullName: form.fullName, email: form.email, password: form.password, badgeNumber: form.badgeNumber || undefined }
+        : { email: form.email, password: form.password };
+      const response = await fetch(`/api/auth/${isRegistering ? 'register' : 'login'}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || payload.error || 'Authentication failed');
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload));
+      onAuthenticated(payload);
+    } catch (err) {
+      setError(err.message || 'Authentication failed');
+      setStatus('idle');
+    }
+  };
+
+  return <main className="auth-shell">
+    <section className="auth-brand">
+      <div className="brand"><div className="brand-symbol"><Icon name="shield" size={44}/></div><div><div><b>SKYSENTINEL</b> <span>SECURITY</span></div><small>Authenticated operations platform</small></div></div>
+      <h1>Security Operations Platform</h1>
+      <p>Sign in with an operator account before entering the Control Room. New supervisors can provision an operator account from this gateway.</p>
+      <div className="auth-status-grid">
+        <span><b>Protected access</b><small>Dashboard and platform APIs require a bearer token.</small></span>
+        <span><b>Operator identity</b><small>Activity is tied to the signed-in user profile.</small></span>
+      </div>
+    </section>
+    <section className="auth-panel" aria-labelledby="auth-title">
+      <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+        <button type="button" role="tab" aria-selected={!isRegistering} onClick={() => { setMode('login'); setError(''); }}>Sign In</button>
+        <button type="button" role="tab" aria-selected={isRegistering} onClick={() => { setMode('register'); setError(''); }}>Sign Up</button>
+      </div>
+      <form onSubmit={submit}>
+        <h2 id="auth-title">{isRegistering ? 'Create operator account' : 'Operator sign in'}</h2>
+        {isRegistering && <label>Full name<input name="fullName" autoComplete="name" value={form.fullName} onChange={update} required /></label>}
+        <label>Email<input name="email" type="email" autoComplete="email" value={form.email} onChange={update} required /></label>
+        <label>Password<input name="password" type="password" autoComplete={isRegistering ? 'new-password' : 'current-password'} value={form.password} onChange={update} minLength={6} required /></label>
+        {isRegistering && <label>Badge number<input name="badgeNumber" autoComplete="off" value={form.badgeNumber} onChange={update} placeholder="Optional" /></label>}
+        {error && <div className="auth-error" role="alert">{error}</div>}
+        <button className="auth-submit" disabled={status === 'submitting'}>{status === 'submitting' ? 'Checking credentials...' : isRegistering ? 'Create Account' : 'Enter Control Room'}</button>
+      </form>
+    </section>
+  </main>;
+}
+
 export default function App() {
+  const [auth, setAuth] = useState(() => loadStoredAuth());
+  const [authState, setAuthState] = useState(() => auth?.token ? 'checking' : 'signed-out');
   const [selected, setSelected] = useState(incidents[0]);
   const [tab, setTab] = useState('Location');
   const [state, setState] = useState('checking');
@@ -18,31 +88,68 @@ export default function App() {
   const [now, setNow] = useState(new Date());
   const [notice, setNotice] = useState('');
   const [activeNav, setActiveNav] = useState('Dashboard');
+  const healthCheckId = useRef(0);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(timer); }, []);
   useEffect(() => {
-    const controller = new AbortController();
+    if (!auth?.token) return;
     let active = true;
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    async function validateSession() {
+      try {
+        const response = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${auth.token}` } });
+        if (!response.ok) throw new Error();
+        const user = await response.json();
+        if (!active) return;
+        setAuth(value => ({ ...value, user }));
+        setAuthState('signed-in');
+      } catch {
+        if (!active) return;
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        setAuth(null);
+        setAuthState('signed-out');
+      }
+    }
+    validateSession();
+    return () => { active = false; };
+  }, [auth?.token]);
+  useEffect(() => {
+    if (authState !== 'signed-in') return;
+    const checkId = healthCheckId.current + 1;
+    healthCheckId.current = checkId;
+    const isCurrentCheck = () => healthCheckId.current === checkId;
+    const timeout = setTimeout(() => { if (isCurrentCheck()) setState('unavailable'); }, 8000);
     setState('checking');
     async function check() {
       try {
-        const response = await fetch('/api/health', { signal: controller.signal });
+        const response = await fetch('/api/health', { headers: { Authorization: `Bearer ${auth.token}` } });
         if (!response.ok) throw new Error();
         const result = await response.json();
         if (result.status !== 'UP' || result.database !== 'UP') throw new Error();
-        if (active) setState('connected');
-      } catch { if (active) setState('unavailable'); }
+        if (isCurrentCheck()) setState('connected');
+      } catch { if (isCurrentCheck()) setState('unavailable'); }
       finally { clearTimeout(timeout); }
     }
     check();
-    return () => { active = false; controller.abort(); clearTimeout(timeout); };
-  }, [attempt]);
+    return () => { clearTimeout(timeout); };
+  }, [attempt, authState, auth?.token]);
+  const signOut = () => {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    setAuth(null);
+    setAuthState('signed-out');
+    setNotice('');
+  };
   const chooseIncident = incident => { setSelected(incident); setTab('Location'); };
   const navigate = (name, id) => {
     if (!id) { setNotice(`${name} will be available in a later development phase.`); return; }
     setActiveNav(name);
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   };
+  if (authState === 'checking') {
+    return <main className="auth-shell auth-loading" role="status"><Icon name="shield" size={48}/><h1>Verifying operator session</h1></main>;
+  }
+  if (authState !== 'signed-in') {
+    return <AuthenticationScreen onAuthenticated={payload => { setAuth(payload); setAuthState('checking'); }} />;
+  }
+  const operator = auth?.user || {};
   return <div className="app-shell" id="dashboard">
     <header className="topbar">
       <div className="brand"><div className="brand-symbol"><Icon name="shield" size={37}/></div><div><div><b>SKYSENTINEL</b> <span>SECURITY</span></div><small>See sooner. Respond smarter.</small></div></div>
@@ -50,7 +157,7 @@ export default function App() {
       <div className="header-clock"><small>{now.toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</small><strong>{now.toLocaleTimeString('en-ZA', { hour12: false })}</strong><span className={state === 'connected' ? 'green' : 'amber'}>● {state === 'connected' ? 'System online' : state === 'checking' ? 'Connecting' : 'Backend unavailable'}</span></div>
       <button className="header-tool" aria-label="Show demo alerts" onClick={() => setNotice('Demo alerts: high-priority panic at Warehouse B; SS-003 battery at 38%.')}><Icon name="bell" size={22}/><i>2</i><small>Alerts</small></button>
       <button className="header-tool" aria-label="Show messages" onClick={() => setNotice('No messaging service connected. This is a dashboard preview.')}><Icon name="mail" size={22}/><small>Messages</small></button>
-      <div className="profile"><span className="avatar"><Icon name="team"/></span><div><b>Operator preview</b><small>Control room · Demo</small></div></div>
+      <div className="profile"><span className="avatar"><Icon name="team"/></span><div><b>{operator.fullName || 'Operator'}</b><small>{operator.role?.replaceAll('_',' ') || 'Control room'}</small></div><button className="sign-out" onClick={signOut}>Sign Out</button></div>
     </header>
     <aside className="sidebar"><nav aria-label="Main navigation">{navigation.map(([name, icon, id]) => <button key={name} className={activeNav === name ? 'nav-active' : ''} onClick={() => navigate(name,id)}><Icon name={icon}/><span>{name}</span>{name === 'Incidents' && <i>4</i>}</button>)}</nav><div className="sidebar-footer"><Icon name="shield" size={26}/><b>SKYSENTINEL</b><small>SECURITY OPERATIONS</small><span>© 2026 SkySentinel Security</span></div></aside>
     <main className="workspace">

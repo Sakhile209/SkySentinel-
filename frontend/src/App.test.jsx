@@ -9,6 +9,7 @@ const authResponse = { token: 'signed.jwt.token', user: operator };
 beforeEach(() => {
   window.localStorage.clear();
   vi.restoreAllMocks();
+  Object.defineProperty(navigator, 'geolocation', { value: undefined, configurable: true });
 });
 
 function mockAuthenticatedFetch(healthResponse = { ok: true, json: async () => ({ status: 'UP', database: 'UP' }) }) {
@@ -17,8 +18,27 @@ function mockAuthenticatedFetch(healthResponse = { ok: true, json: async () => (
     if (url === '/api/auth/register') return { ok: true, json: async () => authResponse };
     if (url === '/api/auth/me') return { ok: true, json: async () => operator };
     if (url === '/api/health') return healthResponse;
+    if (String(url).startsWith('https://api.open-meteo.com/')) return { ok: true, json: async () => ({ latitude: -26.2041, longitude: 28.0473, current: { temperature_2m: 21.4, relative_humidity_2m: 48, weather_code: 2, wind_speed_10m: 16.2, time: '2026-10-01T14:30' } }) };
     return { ok: false, status: 404, json: async () => ({ message: 'Not found' }) };
   }));
+}
+
+function mockLocationGranted() {
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: {
+      getCurrentPosition: vi.fn(success => success({ coords: { latitude: -26.2041, longitude: 28.0473, accuracy: 22 } })),
+    },
+  });
+}
+
+function mockLocationDenied() {
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: {
+      getCurrentPosition: vi.fn((success, error) => error({ code: 1, PERMISSION_DENIED: 1, message: 'Permission denied' })),
+    },
+  });
 }
 
 async function signIn() {
@@ -105,16 +125,25 @@ describe('foundation connectivity', () => {
   });
 });
 
-describe('operations dashboard preview', () => {
-  it('selects an incident from the map and shows its evidence tab', async () => {
+describe('location-based operations platform', () => {
+  it('requests location and loads real map and weather data from the granted coordinates', async () => {
+    mockLocationGranted();
     mockAuthenticatedFetch();
     render(<App />);
     await signIn();
-    fireEvent.click(screen.getByRole('button', { name: 'Select Site E on map' }));
-    expect(screen.getByText('Human response requested. This site has no drone coverage.')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: 'Evidence' }));
-    expect(screen.getByRole('tabpanel')).toHaveTextContent('No evidence attached');
-    expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByLabelText('OpenStreetMap live map centered on your current location')).toBeInTheDocument();
+    expect(await screen.findByText('21°C')).toBeInTheDocument();
+    expect(screen.getByText('Partly cloudy')).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('https://api.open-meteo.com/v1/forecast?'), expect.any(Object));
+  });
+
+  it('clearly explains that location access is required when permission is denied', async () => {
+    mockLocationDenied();
+    mockAuthenticatedFetch();
+    render(<App />);
+    await signIn();
+    expect(await screen.findAllByText('Location access required')).toHaveLength(2);
+    expect(screen.getByText(/Enable location permission to load live weather/)).toBeInTheDocument();
   });
 
   it('keeps operational actions disabled in the demo workspace', async () => {

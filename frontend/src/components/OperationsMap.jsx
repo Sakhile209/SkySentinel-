@@ -1,26 +1,129 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Icon from './Icon.jsx';
-import { incidents } from '../data/demo.js';
 
-export default function OperationsMap({ selected, onSelect }) {
-  return <div className="operations-map">
-    <svg className="map-art" viewBox="0 0 700 440" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <defs><pattern id="blocks" width="85" height="65" patternUnits="userSpaceOnUse" patternTransform="rotate(-22)"><rect width="85" height="65" fill="#111e22"/><path d="M0 0H85V65" fill="none" stroke="#3c4442" strokeWidth="5"/><path d="M8 8h24v15H8Zm33 0h33v15H41ZM8 33h39v23H8Zm48 0h18v23H56Z" fill="#26332f" stroke="#48504a" strokeWidth="1"/><path d="M13 12h15m18 0h22M13 39h27" stroke="#53574a" strokeWidth="2"/></pattern><radialGradient id="map-vignette"><stop offset="30%" stopColor="#00121b" stopOpacity="0"/><stop offset="100%" stopColor="#00121b" stopOpacity=".7"/></radialGradient></defs>
-      <rect width="700" height="440" fill="url(#blocks)"/>
-      <path d="M-10 280Q160 310 220 210T470 140T720 40" fill="none" stroke="#233d38" strokeWidth="62"/>
-      <path d="M-10 280Q160 310 220 210T470 140T720 40" fill="none" stroke="#375b4b" strokeWidth="33"/>
-      <g fill="none" stroke="#858070" strokeWidth="5"><path d="M-20 380 180 290 290 40 400-20M130 480 360 275 740 300M-20 110 250 165 520 460"/><path d="m530-20-55 210 200 230"/></g>
-      <g fill="none" stroke="#bcaa74" strokeWidth="1.5"><path d="M-20 380 180 290 290 40 400-20M130 480 360 275 740 300M-20 110 250 165 520 460"/><path d="m530-20-55 210 200 230"/></g>
-      <path d="m125 100 245-55 200 113-12 170-294 34-135-115Z" fill="#08799b" fillOpacity=".07" stroke="#3690a3" strokeDasharray="7 6"/>
-      <rect width="700" height="440" fill="url(#map-vignette)"/>
-      <g fill="#8d9e9e" fontFamily="sans-serif" fontSize="11"><text x="250" y="105">INDUSTRIAL AREA NORTH</text><text x="310" y="373">North access road</text><text x="44" y="240" transform="rotate(-24 44 240)">Service road</text></g>
-    </svg>
-    <span className="map-label">SIMULATED AREA · NOT FLIGHT COVERAGE</span>
-    <div className="map-base" style={{ left: '26%', top: '24%' }}><Icon name="drone" size={25}/><span>DB-001<small>SS-001 · Available</small></span></div>
-    <div className="map-base" style={{ left: '75%', top: '12%' }}><Icon name="drone" size={23}/><span>DB-002<small>Dedicated base</small></span></div>
-    <div className="map-site" style={{ left: '29%', top: '53%' }}><Icon name="site"/><small>Warehouse A</small></div>
-    {incidents.map(incident => <button key={incident.id} className={`map-marker ${incident.priority.toLowerCase()} ${selected.id === incident.id ? 'selected' : ''}`} style={{ left: `${incident.x}%`, top: `${incident.y}%` }} onClick={() => onSelect(incident)} aria-label={`Select ${incident.site} on map`}><Icon name={incident.priority === 'HIGH' ? 'alert' : 'site'} size={21}/><span>{incident.site}</span></button>)}
-    <div className="map-team"><Icon name="car"/><span>Response Team 03<small>Dispatched · demo</small></span></div>
-    <div className="map-legend"><span className="red">● Incident</span><span className="green">● Drone base</span><span className="amber">● Response team</span><span className="cyan">● Site</span></div>
+const TILE_SIZE = 256;
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function lngToTileX(lng, zoom) {
+  return ((lng + 180) / 360) * 2 ** zoom;
+}
+
+function latToTileY(lat, zoom) {
+  const radians = lat * Math.PI / 180;
+  return (1 - Math.log(Math.tan(radians) + 1 / Math.cos(radians)) / Math.PI) / 2 * 2 ** zoom;
+}
+
+function tileXToLng(x, zoom) {
+  return x / 2 ** zoom * 360 - 180;
+}
+
+function tileYToLat(y, zoom) {
+  const radians = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / 2 ** zoom)));
+  return radians * 180 / Math.PI;
+}
+
+function formatCoord(value, axis) {
+  const direction = axis === 'lat' ? value >= 0 ? 'N' : 'S' : value >= 0 ? 'E' : 'W';
+  return `${Math.abs(value).toFixed(5)} ${direction}`;
+}
+
+export default function OperationsMap({ location, onRequestLocation }) {
+  const [zoom, setZoom] = useState(15);
+  const [center, setCenter] = useState(null);
+
+  useEffect(() => {
+    if (location?.coords) {
+      setCenter({ lat: location.coords.latitude, lng: location.coords.longitude });
+    }
+  }, [location?.coords?.latitude, location?.coords?.longitude]);
+
+  const mapModel = useMemo(() => {
+    if (!center) return null;
+    const centerX = lngToTileX(center.lng, zoom);
+    const centerY = latToTileY(center.lat, zoom);
+    const baseX = Math.floor(centerX) - 1;
+    const baseY = Math.floor(centerY) - 1;
+    const offsetX = (centerX - Math.floor(centerX)) * TILE_SIZE;
+    const offsetY = (centerY - Math.floor(centerY)) * TILE_SIZE;
+    const tiles = [];
+    for (let row = 0; row < 4; row += 1) {
+      for (let col = 0; col < 4; col += 1) {
+        const x = baseX + col;
+        const y = baseY + row;
+        const max = 2 ** zoom;
+        if (y >= 0 && y < max) {
+          tiles.push({
+            key: `${zoom}-${x}-${y}`,
+            src: `https://tile.openstreetmap.org/${zoom}/${((x % max) + max) % max}/${y}.png`,
+            left: col * TILE_SIZE - offsetX,
+            top: row * TILE_SIZE - offsetY,
+          });
+        }
+      }
+    }
+    return { tiles };
+  }, [center, zoom]);
+
+  const pan = (latDelta, lngDelta) => {
+    setCenter(value => value ? {
+      lat: clamp(value.lat + latDelta, -85, 85),
+      lng: clamp(value.lng + lngDelta, -180, 180),
+    } : value);
+  };
+
+  if (location?.status === 'denied') {
+    return <div className="operations-map real-map map-empty">
+      <Icon name="pin" size={34}/>
+      <h3>Location access required</h3>
+      <p>Enable location permission to show your current position on the live map and load location-based weather.</p>
+      <button onClick={onRequestLocation}>Enable Location</button>
+    </div>;
+  }
+
+  if (location?.status === 'unsupported') {
+    return <div className="operations-map real-map map-empty">
+      <Icon name="pin" size={34}/>
+      <h3>Location unavailable</h3>
+      <p>This browser does not support geolocation. Live map and weather features require location access.</p>
+    </div>;
+  }
+
+  if (!center || location?.status === 'requesting') {
+    return <div className="operations-map real-map map-empty">
+      <Icon name="map" size={34}/>
+      <h3>Waiting for location permission</h3>
+      <p>SkySentinel needs your current location to load real map tiles and weather for this control room.</p>
+      <button onClick={onRequestLocation}>{location?.status === 'requesting' ? 'Requesting...' : 'Enable Location'}</button>
+    </div>;
+  }
+
+  const panStep = 0.0035 * (16 - zoom);
+
+  return <div className="operations-map real-map">
+    <div className="osm-tiles" aria-label="OpenStreetMap live map centered on your current location">
+      {mapModel.tiles.map(tile => <img key={tile.key} src={tile.src} alt="" style={{ left: tile.left, top: tile.top }} draggable="false" />)}
+      <div className="user-location-marker" aria-label="Your current location"><span /></div>
+    </div>
+    <div className="map-label">OPENSTREETMAP · LIVE MAP DATA</div>
+    <div className="map-coordinate-card">
+      <b>Your location</b>
+      <small>{formatCoord(center.lat, 'lat')} · {formatCoord(center.lng, 'lng')}</small>
+      {location.coords?.accuracy && <small>Accuracy ±{Math.round(location.coords.accuracy)} m</small>}
+    </div>
+    <div className="map-controls" aria-label="Map controls">
+      <button aria-label="Zoom in" onClick={() => setZoom(value => clamp(value + 1, 3, 18))}>+</button>
+      <button aria-label="Zoom out" onClick={() => setZoom(value => clamp(value - 1, 3, 18))}>−</button>
+      <button aria-label="Recenter map on current location" onClick={() => setCenter({ lat: location.coords.latitude, lng: location.coords.longitude })}><Icon name="pin" size={15}/></button>
+    </div>
+    <div className="map-pan-controls" aria-label="Pan map controls">
+      <button aria-label="Pan north" onClick={() => pan(panStep, 0)}>↑</button>
+      <button aria-label="Pan west" onClick={() => pan(0, -panStep)}>←</button>
+      <button aria-label="Pan east" onClick={() => pan(0, panStep)}>→</button>
+      <button aria-label="Pan south" onClick={() => pan(-panStep, 0)}>↓</button>
+    </div>
+    <div className="map-legend"><span className="cyan">● Current location</span><span>© OpenStreetMap contributors</span></div>
   </div>;
 }

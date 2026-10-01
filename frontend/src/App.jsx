@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Icon from './components/Icon.jsx';
 import Panel from './components/Panel.jsx';
 import OperationsMap from './components/OperationsMap.jsx';
@@ -10,6 +10,60 @@ const navigation = [['Dashboard','dashboard','dashboard'],['Live Map','map','map
 const badgeColor = value => ['HIGH','NEW'].includes(value) ? 'red' : ['MEDIUM','CHARGING','DISPATCHED'].includes(value) ? 'amber' : ['AVAILABLE','COMPLETED','LOW'].includes(value) ? 'green' : 'cyan';
 function Badge({ value }) { return <span className={`badge ${badgeColor(value)}`}>{value.replaceAll('_',' ')}</span>; }
 function Stat({ icon, title, value, detail, color = 'cyan' }) { return <article className="stat"><span className={`stat-icon ${color}`}><Icon name={icon} size={29}/></span><div><h2>{title}</h2><strong>{value}</strong><small className={color}>{detail}</small></div></article>; }
+const weatherCodeText = code => ({
+  0: 'Clear sky',
+  1: 'Mainly clear',
+  2: 'Partly cloudy',
+  3: 'Overcast',
+  45: 'Fog',
+  48: 'Depositing rime fog',
+  51: 'Light drizzle',
+  53: 'Moderate drizzle',
+  55: 'Dense drizzle',
+  61: 'Slight rain',
+  63: 'Moderate rain',
+  65: 'Heavy rain',
+  71: 'Slight snow',
+  73: 'Moderate snow',
+  75: 'Heavy snow',
+  80: 'Slight rain showers',
+  81: 'Moderate rain showers',
+  82: 'Violent rain showers',
+  95: 'Thunderstorm',
+  96: 'Thunderstorm with hail',
+  99: 'Thunderstorm with hail',
+}[code] || 'Weather data available');
+
+function WeatherPanel({ location, weather, onRequestLocation }) {
+  if (location.status === 'denied') {
+    return <div className="weather weather-empty"><Icon name="pin" size={34}/><div><b>Location access required</b><span>Enable location permission to load live weather for your current position.</span><button onClick={onRequestLocation}>Enable Location</button></div></div>;
+  }
+  if (location.status === 'unsupported') {
+    return <div className="weather weather-empty"><Icon name="pin" size={34}/><div><b>Location unavailable</b><span>This browser cannot provide current location, so live local weather cannot be loaded.</span></div></div>;
+  }
+  if (weather.status === 'loading' || location.status === 'requesting') {
+    return <div className="weather weather-empty"><Icon name="cloud" size={34}/><div><b>Loading live weather</b><span>Waiting for current location and weather service response.</span></div></div>;
+  }
+  if (weather.status === 'error') {
+    return <div className="weather weather-empty"><Icon name="cloud" size={34}/><div><b>Weather unavailable</b><span>{weather.error || 'Unable to load current weather from the weather service.'}</span><button onClick={onRequestLocation}>Retry Location</button></div></div>;
+  }
+  if (!weather.data) {
+    return <div className="weather weather-empty"><Icon name="cloud" size={34}/><div><b>Location required</b><span>SkySentinel never uses fake weather. Grant location access to load live conditions.</span><button onClick={onRequestLocation}>Enable Location</button></div></div>;
+  }
+  return <div className="weather">
+    <div>
+      <small>{weather.data.latitude.toFixed(4)}, {weather.data.longitude.toFixed(4)}</small>
+      <div><Icon name="cloud" size={40}/><strong>{Math.round(weather.data.temperature)}°C</strong></div>
+      <span>{weather.data.condition}</span>
+    </div>
+    <dl>
+      <dt>Wind</dt><dd>{Math.round(weather.data.windSpeed)} km/h</dd>
+      <dt>Humidity</dt><dd>{Math.round(weather.data.humidity)}%</dd>
+      <dt>Updated</dt><dd>{new Date(weather.data.updatedAt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false })}</dd>
+      <dt>Source</dt><dd>Open-Meteo</dd>
+    </dl>
+  </div>;
+}
 
 function loadStoredAuth() {
   try {
@@ -88,7 +142,40 @@ export default function App() {
   const [now, setNow] = useState(new Date());
   const [notice, setNotice] = useState('');
   const [activeNav, setActiveNav] = useState('Dashboard');
+  const [location, setLocation] = useState({ status: 'idle', coords: null, error: '' });
+  const [weather, setWeather] = useState({ status: 'idle', data: null, error: '' });
   const healthCheckId = useRef(0);
+  const requestLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setLocation({ status: 'unsupported', coords: null, error: 'This browser does not support geolocation.' });
+      setWeather({ status: 'idle', data: null, error: '' });
+      return;
+    }
+    setLocation(value => ({ ...value, status: 'requesting', error: '' }));
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        setLocation({
+          status: 'granted',
+          coords: {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+          },
+          error: '',
+        });
+      },
+      error => {
+        const denied = error.code === error.PERMISSION_DENIED;
+        setLocation({
+          status: denied ? 'denied' : 'error',
+          coords: null,
+          error: denied ? 'Location permission was denied.' : error.message || 'Unable to read current location.',
+        });
+        setWeather({ status: 'idle', data: null, error: '' });
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+    );
+  }, []);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(timer); }, []);
   useEffect(() => {
     if (!auth?.token) return;
@@ -131,11 +218,57 @@ export default function App() {
     check();
     return () => { clearTimeout(timeout); };
   }, [attempt, authState, auth?.token]);
+  useEffect(() => {
+    if (authState === 'signed-in' && location.status === 'idle') {
+      requestLocation();
+    }
+  }, [authState, location.status, requestLocation]);
+  useEffect(() => {
+    if (location.status !== 'granted' || !location.coords) return;
+    const controller = new AbortController();
+    async function loadWeather() {
+      setWeather({ status: 'loading', data: null, error: '' });
+      try {
+        const params = new URLSearchParams({
+          latitude: String(location.coords.latitude),
+          longitude: String(location.coords.longitude),
+          current: 'temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m',
+          timezone: 'auto',
+        });
+        const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`, { signal: controller.signal });
+        if (!response.ok) throw new Error('Weather service returned an error.');
+        const result = await response.json();
+        const current = result.current;
+        if (!current) throw new Error('Weather service returned no current conditions.');
+        setWeather({
+          status: 'ready',
+          error: '',
+          data: {
+            latitude: result.latitude,
+            longitude: result.longitude,
+            temperature: current.temperature_2m,
+            humidity: current.relative_humidity_2m,
+            windSpeed: current.wind_speed_10m,
+            condition: weatherCodeText(current.weather_code),
+            updatedAt: current.time,
+          },
+        });
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          setWeather({ status: 'error', data: null, error: error.message || 'Unable to load live weather.' });
+        }
+      }
+    }
+    loadWeather();
+    return () => controller.abort();
+  }, [location.status, location.coords?.latitude, location.coords?.longitude]);
   const signOut = () => {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
     setAuth(null);
     setAuthState('signed-out');
     setNotice('');
+    setLocation({ status: 'idle', coords: null, error: '' });
+    setWeather({ status: 'idle', data: null, error: '' });
   };
   const chooseIncident = incident => { setSelected(incident); setTab('Location'); };
   const navigate = (name, id) => {
@@ -166,7 +299,7 @@ export default function App() {
       <div className="stats-grid"><Stat icon="alert" title="Active incidents" value="4" detail="1 awaiting acknowledgement" color="red"/><Stat icon="drone" title="Drones" value={<>2 <em>/ 3</em></>} detail="2 available" color="green"/><Stat icon="mission" title="Active missions" value="0" detail="Awaiting authorization"/><Stat icon="team" title="Response teams" value="4" detail="2 available" color="green"/><Stat icon="site" title="Protected sites" value="5" detail="Shared · Dedicated · No drone"/><Stat icon="pulse" title="System status" value={state === 'connected' ? 'Online' : state === 'checking' ? 'Checking' : 'Offline'} detail={state === 'connected' ? 'Backend & database connected' : 'Check service connection'} color={state === 'connected' ? 'green' : 'amber'}/></div>
       <div className="main-grid">
         <Panel title="Live incidents" id="incidents" action={<span className="panel-meta">4 open</span>}><div className="incident-list">{incidents.map(incident => <button key={incident.id} className={`incident-card ${selected.id === incident.id ? 'incident-selected' : ''}`} onClick={() => chooseIncident(incident)} aria-pressed={selected.id === incident.id}><span className={`incident-icon ${badgeColor(incident.priority)}`}><Icon name="alert" size={24}/></span><span className="incident-copy"><b>{incident.site}</b><small>{incident.type}</small></span><span className="incident-status"><Badge value={incident.priority}/><time>{incident.time}</time><small className={badgeColor(incident.status)}>{incident.status}</small></span></button>)}</div><div className="panel-bottom"><span className="red">●</span> Operator acknowledgement required</div></Panel>
-        <Panel title="Live map" id="map" className="map-panel" action={<span className="panel-meta">Industrial Area North <span className="map-filter">All resources⌄</span></span>}><OperationsMap selected={selected} onSelect={chooseIncident}/></Panel>
+        <Panel title="Live map" id="map" className="map-panel" action={<span className="panel-meta">{location.status === 'granted' ? 'Current location' : 'Location required'} <button className="map-filter" onClick={requestLocation}>Refresh location</button></span>}><OperationsMap location={location} onRequestLocation={requestLocation}/></Panel>
         <Panel title="Selected incident" className="details-panel" action={<Badge value={selected.priority}/>}><div className="selected-banner"><Icon name="alert" size={29}/><div><h3>{selected.site}</h3><small>{selected.type}</small></div><span>{selected.id}</span></div><dl className="incident-details"><dt>Site:</dt><dd>{selected.site}</dd><dt>Location:</dt><dd>{selected.zone}</dd><dt>Device:</dt><dd>{selected.device}</dd><dt>Time:</dt><dd>Demo event · {selected.time}:32</dd><dt>Priority:</dt><dd><Badge value={selected.priority}/></dd><dt>Status:</dt><dd><Badge value={selected.status}/></dd><dt>Description:</dt><dd>{selected.description}</dd></dl><div className="incident-actions"><button disabled className="danger">Acknowledge</button><button disabled>Create Mission</button><button disabled className="success">Dispatch Team</button></div><p className="action-hint">Preview only · Operational actions are not enabled</p><div className="tabs" role="tablist" aria-label="Incident details">{['Location','Notes','Evidence','History'].map(name => <button role="tab" id={`tab-${name}`} aria-controls="incident-tab-panel" aria-selected={tab === name} key={name} onClick={() => setTab(name)}>{name}</button>)}</div><div role="tabpanel" id="incident-tab-panel" aria-labelledby={`tab-${tab}`} className="tab-content">{tab === 'Location' ? <div className="location-preview"><Icon name="pin" size={27}/><div><b>{selected.zone}</b><small>{selected.site} · Illustrative location</small></div></div> : tab === 'Notes' ? 'No operator notes in this preview.' : tab === 'Evidence' ? 'No evidence attached. Camera preview is illustrative only.' : `${selected.time} · Demo incident presented for operator review.`}</div></Panel>
       </div>
       <div className="operations-grid">
@@ -175,7 +308,7 @@ export default function App() {
         <Panel title="Response teams" id="teams" action={<span className="panel-meta">4 teams</span>}>{teams.map(team => <div className="resource-row team-row" key={team.name}><Icon name="car" size={28}/><div className="resource-name"><b>{team.name}</b><small>{team.zone}</small></div><Badge value={team.state}/></div>)}</Panel>
         <Panel title="Live drone feed" action={<span className="preview-badge">● DEMO</span>}><div className="feed-layout"><DemoFeed/><dl className="telemetry"><dt>Battery</dt><dd>76%</dd><dt>Altitude</dt><dd>—</dd><dt>Speed</dt><dd>—</dd><dt>Status</dt><dd className="cyan">PREVIEW</dd><dt>Signal</dt><dd>Not connected</dd></dl></div><div className="feed-footer"><span><Icon name="evidence"/> Camera placeholder</span><span className="green">SIMULATED</span></div></Panel>
       </div>
-      <div className="bottom-grid"><Panel title="Recent activity"><ul className="activity-list"><li><time>19:14</time><span>Panic event preview · PB-WH-002</span><small>Demo</small></li><li><time>19:14</time><span>Incident shown · INC-10024</span><small>Demo</small></li><li><time>18:03</time><span>Perimeter alarm · Facility D</span><small>Demo</small></li><li><time>17:24</time><span>Response Team 02 · On scene</span><small>Demo</small></li></ul></Panel><Panel title="System alerts"><div className="system-alert"><Icon name="alert"/><div><b>High-priority incident</b><small>Warehouse B requires operator review</small></div></div><div className="system-alert amber"><Icon name="drone"/><div><b>SS-003 battery at 38%</b><small>Charging at dedicated base DB-002</small></div></div><div className={`system-alert ${state === 'connected' ? 'green' : 'amber'}`}><Icon name="shield"/><div><b role="status">{state === 'connected' ? 'Connected — backend and database healthy' : state === 'checking' ? 'Checking connection…' : 'Connection unavailable — check backend and database'}</b><button className="text-button" disabled={state === 'checking'} onClick={() => setAttempt(value => value + 1)}>Check again</button></div></div></Panel><Panel title="Weather & conditions" action={<span className="panel-meta">Sample</span>}><div className="weather"><div><small>Industrial Area North</small><div><Icon name="cloud" size={40}/><strong>14°C</strong></div><span>Partly cloudy · Demo</span></div><dl><dt>Wind</dt><dd>12 km/h</dd><dt>Humidity</dt><dd>68%</dd><dt>Visibility</dt><dd>10 km</dd><dt>Precipitation</dt><dd>0%</dd></dl></div></Panel><Panel title="Quick actions"><div className="quick-actions">{['New Incident','Register Panic Button','Add Drone','Add Site'].map(label => <button disabled key={label}>{label}</button>)}</div><small className="quick-hint">Available in later phases</small></Panel></div>
+      <div className="bottom-grid"><Panel title="Recent activity"><ul className="activity-list"><li><time>19:14</time><span>Panic event preview · PB-WH-002</span><small>Demo</small></li><li><time>19:14</time><span>Incident shown · INC-10024</span><small>Demo</small></li><li><time>18:03</time><span>Perimeter alarm · Facility D</span><small>Demo</small></li><li><time>17:24</time><span>Response Team 02 · On scene</span><small>Demo</small></li></ul></Panel><Panel title="System alerts"><div className="system-alert"><Icon name="alert"/><div><b>High-priority incident</b><small>Warehouse B requires operator review</small></div></div><div className="system-alert amber"><Icon name="drone"/><div><b>SS-003 battery at 38%</b><small>Charging at dedicated base DB-002</small></div></div><div className={`system-alert ${state === 'connected' ? 'green' : 'amber'}`}><Icon name="shield"/><div><b role="status">{state === 'connected' ? 'Connected — backend and database healthy' : state === 'checking' ? 'Checking connection…' : 'Connection unavailable — check backend and database'}</b><button className="text-button" disabled={state === 'checking'} onClick={() => setAttempt(value => value + 1)}>Check again</button></div></div></Panel><Panel title="Live weather" action={<span className="panel-meta">{weather.status === 'ready' ? 'Current location' : 'Location based'}</span>}><WeatherPanel location={location} weather={weather} onRequestLocation={requestLocation}/></Panel><Panel title="Quick actions"><div className="quick-actions">{['New Incident','Register Panic Button','Add Drone','Add Site'].map(label => <button disabled key={label}>{label}</button>)}</div><small className="quick-hint">Available in later phases</small></Panel></div>
       <footer className="workspace-footer"><span>SKYSENTINEL SECURITY <span> / </span> OPERATIONS PREVIEW</span><span>People in control. Always.</span></footer>
     </main>
   </div>;

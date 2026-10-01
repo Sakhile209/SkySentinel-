@@ -12,11 +12,15 @@ public record RegisterRequest(
         @Email(message = "Invalid email format")
         String email,
 
+        @NotBlank(message = "Cellphone number is required")
+        String cellphoneNumber,
+
+        @NotBlank(message = "Badge number is required")
+        String badgeNumber,
+
         @NotBlank(message = "Password is required")
         @Size(min = 6, message = "Password must be at least 6 characters")
         String password,
 
-        String role,
-
-        String badgeNumber
+        String role
 ) {}

@@ -5,6 +5,7 @@ import App from './App.jsx';
 
 const operator = { id: 1, email: 'ops@skysentinel.test', fullName: 'Ava Operator', role: 'CONTROL_ROOM_OPERATOR', badgeNumber: 'OP-101' };
 const authResponse = { token: 'signed.jwt.token', user: operator };
+const otpResponse = () => ({ challengeId: 'challenge-123', message: 'Verification code sent to your registered email and cellphone.', expiresAt: new Date(Date.now() + 300000).toISOString() });
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -14,8 +15,9 @@ beforeEach(() => {
 
 function mockAuthenticatedFetch(healthResponse = { ok: true, json: async () => ({ status: 'UP', database: 'UP' }) }) {
   vi.stubGlobal('fetch', vi.fn(async (url) => {
-    if (url === '/api/auth/login') return { ok: true, json: async () => authResponse };
-    if (url === '/api/auth/register') return { ok: true, json: async () => authResponse };
+    if (url === '/api/auth/login') return { ok: true, json: async () => otpResponse() };
+    if (url === '/api/auth/verify-otp') return { ok: true, json: async () => authResponse };
+    if (url === '/api/auth/register') return { ok: true, json: async () => ({ message: 'Registration successful. Sign in to receive your verification code.', user: operator }) };
     if (url === '/api/auth/me') return { ok: true, json: async () => operator };
     if (url === '/api/health') return healthResponse;
     if (String(url).startsWith('https://api.open-meteo.com/')) return { ok: true, json: async () => ({ latitude: -26.2041, longitude: 28.0473, current: { temperature_2m: 21.4, relative_humidity_2m: 48, weather_code: 2, wind_speed_10m: 16.2, time: '2026-10-01T14:30' } }) };
@@ -44,7 +46,10 @@ function mockLocationDenied() {
 async function signIn() {
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ops@skysentinel.test' } });
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Enter Control Room' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send OTP' }));
+  await screen.findByText('Verification code');
+  fireEvent.change(screen.getByLabelText('6-digit OTP'), { target: { value: '123456' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Verify and Enter Control Room' }));
   await screen.findByText('SECURITY OPERATIONS CENTRE');
 }
 
@@ -52,7 +57,7 @@ describe('authentication gate', () => {
   it('requires sign in or sign up before showing the control room', () => {
     mockAuthenticatedFetch();
     render(<App />);
-    expect(screen.getByRole('button', { name: 'Enter Control Room' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send OTP' })).toBeInTheDocument();
     expect(screen.queryByText('SECURITY OPERATIONS CENTRE')).not.toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalledWith('/api/health', expect.any(Object));
   });
@@ -65,20 +70,23 @@ describe('authentication gate', () => {
     expect(screen.getByText('SECURITY OPERATIONS CENTRE')).toBeInTheDocument();
     expect(screen.getByText('Ava Operator')).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem('skysentinel.auth')).token).toBe('signed.jwt.token');
+    expect(fetch).toHaveBeenCalledWith('/api/auth/verify-otp', expect.objectContaining({ method: 'POST' }));
     expect(fetch).toHaveBeenCalledWith('/api/auth/me', expect.objectContaining({ headers: { Authorization: 'Bearer signed.jwt.token' } }));
   });
 
-  it('creates a new operator account from the sign up form', async () => {
+  it('creates a new operator account and requires sign in before access', async () => {
     mockAuthenticatedFetch();
     render(<App />);
     fireEvent.click(screen.getByRole('tab', { name: 'Sign Up' }));
     fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Ava Operator' } });
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ops@skysentinel.test' } });
+    fireEvent.change(screen.getByLabelText('Cellphone number'), { target: { value: '+27111222333' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
     fireEvent.change(screen.getByLabelText('Badge number'), { target: { value: 'OP-101' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
-    await screen.findByText('SECURITY OPERATIONS CENTRE');
+    await screen.findByText('Registration successful. Sign in to receive your verification code.');
     expect(fetch).toHaveBeenCalledWith('/api/auth/register', expect.objectContaining({ method: 'POST' }));
+    expect(screen.queryByText('SECURITY OPERATIONS CENTRE')).not.toBeInTheDocument();
   });
 });
 
@@ -95,7 +103,8 @@ describe('foundation connectivity', () => {
     let healthCalls = 0;
     mockAuthenticatedFetch();
     fetch.mockImplementation(async (url) => {
-      if (url === '/api/auth/login') return { ok: true, json: async () => authResponse };
+      if (url === '/api/auth/login') return { ok: true, json: async () => otpResponse() };
+      if (url === '/api/auth/verify-otp') return { ok: true, json: async () => authResponse };
       if (url === '/api/auth/me') return { ok: true, json: async () => operator };
       if (url === '/api/health') {
         healthCalls += 1;
@@ -107,7 +116,10 @@ describe('foundation connectivity', () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ops@skysentinel.test' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Enter Control Room' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send OTP' }));
+    await screen.findByText('Verification code');
+    fireEvent.change(screen.getByLabelText('6-digit OTP'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and Enter Control Room' }));
     await screen.findByText('SECURITY OPERATIONS CENTRE');
     expect(await screen.findByText(/Connection unavailable/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
@@ -119,7 +131,10 @@ describe('foundation connectivity', () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ops@skysentinel.test' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Enter Control Room' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send OTP' }));
+    await screen.findByText('Verification code');
+    fireEvent.change(screen.getByLabelText('6-digit OTP'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and Enter Control Room' }));
     await screen.findByText('SECURITY OPERATIONS CENTRE');
     expect(await screen.findByText(/Connection unavailable/)).toBeInTheDocument();
   });

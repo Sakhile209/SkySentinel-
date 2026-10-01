@@ -13,9 +13,31 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${SMTP_AUTH:true}
+          starttls:
+            enable: ${SMTP_STARTTLS:true}
 server:
   port: ${SERVER_PORT:8080}
   error:
     include-message: always
     include-stacktrace: never
     include-binding-errors: always
+skysentinel:
+  auth:
+    otp-expiration-minutes: ${OTP_EXPIRATION_MINUTES:5}
+    otp-resend-cooldown-seconds: ${OTP_RESEND_COOLDOWN_SECONDS:30}
+    otp-max-resends: ${OTP_MAX_RESENDS:3}
+    otp-max-attempts: ${OTP_MAX_ATTEMPTS:5}
+  notifications:
+    email:
+      from: ${NOTIFICATION_EMAIL_FROM:no-reply@skysentinel.local}
+    sms:
+      webhook-url: ${SMS_WEBHOOK_URL:}

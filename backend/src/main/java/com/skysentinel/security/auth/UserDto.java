@@ -4,6 +4,7 @@ public record UserDto(
         Long id,
         String email,
         String fullName,
+        String cellphoneNumber,
         String role,
         String badgeNumber
 ) {
@@ -12,6 +13,7 @@ public record UserDto(
                 user.getId(),
                 user.getEmail(),
                 user.getFullName(),
+                user.getCellphoneNumber(),
                 user.getRole(),
                 user.getBadgeNumber()
         );

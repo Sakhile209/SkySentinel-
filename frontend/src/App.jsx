@@ -74,20 +74,42 @@ function loadStoredAuth() {
   }
 }
 
+function getPayloadMessage(payload, fallback) {
+  return payload?.message || payload?.error || fallback;
+}
+
+function secondsUntil(value) {
+  const expiry = new Date(value).getTime();
+  if (!Number.isFinite(expiry)) return 0;
+  return Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
+}
+
 function AuthenticationScreen({ onAuthenticated }) {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ fullName: '', email: '', password: '', badgeNumber: '' });
+  const [form, setForm] = useState({ fullName: '', email: '', cellphoneNumber: '', password: '', badgeNumber: '' });
+  const [challenge, setChallenge] = useState(null);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSeconds, setOtpSeconds] = useState(0);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const isRegistering = mode === 'register';
   const update = event => setForm(value => ({ ...value, [event.target.name]: event.target.value }));
+  useEffect(() => {
+    if (!challenge?.expiresAt) return;
+    const updateCountdown = () => setOtpSeconds(secondsUntil(challenge.expiresAt));
+    updateCountdown();
+    const timer = setInterval(updateCountdown, 1000);
+    return () => clearInterval(timer);
+  }, [challenge?.expiresAt]);
   const submit = async event => {
     event.preventDefault();
     setStatus('submitting');
     setError('');
+    setMessage('');
     try {
       const body = isRegistering
-        ? { fullName: form.fullName, email: form.email, password: form.password, badgeNumber: form.badgeNumber || undefined }
+        ? { fullName: form.fullName, email: form.email, cellphoneNumber: form.cellphoneNumber, password: form.password, badgeNumber: form.badgeNumber }
         : { email: form.email, password: form.password };
       const response = await fetch(`/api/auth/${isRegistering ? 'register' : 'login'}`, {
         method: 'POST',
@@ -95,14 +117,100 @@ function AuthenticationScreen({ onAuthenticated }) {
         body: JSON.stringify(body),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.message || payload.error || 'Authentication failed');
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload));
-      onAuthenticated(payload);
+      if (!response.ok) throw new Error(getPayloadMessage(payload, 'Authentication failed'));
+      if (isRegistering) {
+        setMode('login');
+        setMessage(payload.message || 'Registration confirmed. Sign in to receive your verification code.');
+        setForm(value => ({ ...value, password: '' }));
+      } else {
+        setChallenge(payload);
+        setOtpCode('');
+        setMessage(payload.message || 'Verification code sent to your registered email and cellphone.');
+      }
+      setStatus('idle');
     } catch (err) {
       setError(err.message || 'Authentication failed');
       setStatus('idle');
     }
   };
+  const verifyOtp = async event => {
+    event.preventDefault();
+    setStatus('verifying');
+    setError('');
+    setMessage('');
+    if (!challenge?.challengeId) {
+      setError('Verification challenge expired. Please sign in again.');
+      setChallenge(null);
+      setOtpCode('');
+      setStatus('idle');
+      return;
+    }
+    try {
+      const response = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeId: challenge.challengeId, code: otpCode }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(getPayloadMessage(payload, 'Verification failed'));
+      setChallenge(null);
+      setOtpCode('');
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload));
+      onAuthenticated(payload);
+      setStatus('idle');
+    } catch (err) {
+      setError(err.message || 'Verification failed');
+      setStatus('idle');
+    }
+  };
+  const resendOtp = async () => {
+    setStatus('resending');
+    setError('');
+    setMessage('');
+    try {
+      const response = await fetch('/api/auth/resend-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeId: challenge.challengeId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(getPayloadMessage(payload, 'Unable to resend verification code'));
+      setChallenge(payload);
+      setOtpCode('');
+      setMessage(payload.message || 'A new verification code has been sent.');
+      setStatus('idle');
+    } catch (err) {
+      setError(err.message || 'Unable to resend verification code');
+      setStatus('idle');
+    }
+  };
+  if (challenge) {
+    return <main className="auth-shell">
+      <section className="auth-brand">
+        <div className="brand"><div className="brand-symbol"><Icon name="shield" size={44}/></div><div><div><b>SKYSENTINEL</b> <span>SECURITY</span></div><small>Two-step operator verification</small></div></div>
+        <h1>Verify Operator Sign In</h1>
+        <p>Enter the 6-digit code sent to your registered email and cellphone number. The code expires in 5 minutes and can only be used once.</p>
+        <div className="auth-status-grid">
+          <span><b>OTP required</b><small>Control Room access starts only after verification.</small></span>
+          <span><b>Single use</b><small>Expired or used codes cannot create a session.</small></span>
+        </div>
+      </section>
+      <section className="auth-panel" aria-labelledby="otp-title">
+        <form onSubmit={verifyOtp}>
+          <h2 id="otp-title">Verification code</h2>
+          <p className="auth-copy">{otpSeconds > 0 ? `Code expires in ${Math.floor(otpSeconds / 60)}:${String(otpSeconds % 60).padStart(2, '0')}` : 'This verification code has expired.'}</p>
+          <label>6-digit OTP<input name="otp" inputMode="numeric" pattern="\d{6}" autoComplete="one-time-code" value={otpCode} onChange={event => setOtpCode(event.target.value.replace(/\D/g, '').slice(0, 6))} required /></label>
+          {message && <div className="auth-message" role="status">{message}</div>}
+          {error && <div className="auth-error" role="alert">{error}</div>}
+          <button className="auth-submit" disabled={status === 'verifying' || otpCode.length !== 6}>{status === 'verifying' ? 'Verifying...' : 'Verify and Enter Control Room'}</button>
+          <div className="auth-secondary-actions">
+            <button type="button" onClick={resendOtp} disabled={otpSeconds > 0 || status === 'resending'}>{status === 'resending' ? 'Sending...' : 'Request New OTP'}</button>
+            <button type="button" onClick={() => { setChallenge(null); setOtpCode(''); setError(''); setMessage(''); }}>Back to sign in</button>
+          </div>
+        </form>
+      </section>
+    </main>;
+  }
 
   return <main className="auth-shell">
     <section className="auth-brand">
@@ -116,17 +224,19 @@ function AuthenticationScreen({ onAuthenticated }) {
     </section>
     <section className="auth-panel" aria-labelledby="auth-title">
       <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
-        <button type="button" role="tab" aria-selected={!isRegistering} onClick={() => { setMode('login'); setError(''); }}>Sign In</button>
-        <button type="button" role="tab" aria-selected={isRegistering} onClick={() => { setMode('register'); setError(''); }}>Sign Up</button>
+        <button type="button" role="tab" aria-selected={!isRegistering} onClick={() => { setMode('login'); setError(''); setMessage(''); }}>Sign In</button>
+        <button type="button" role="tab" aria-selected={isRegistering} onClick={() => { setMode('register'); setError(''); setMessage(''); }}>Sign Up</button>
       </div>
       <form onSubmit={submit}>
         <h2 id="auth-title">{isRegistering ? 'Create operator account' : 'Operator sign in'}</h2>
         {isRegistering && <label>Full name<input name="fullName" autoComplete="name" value={form.fullName} onChange={update} required /></label>}
         <label>Email<input name="email" type="email" autoComplete="email" value={form.email} onChange={update} required /></label>
+        {isRegistering && <label>Cellphone number<input name="cellphoneNumber" type="tel" autoComplete="tel" value={form.cellphoneNumber} onChange={update} required /></label>}
         <label>Password<input name="password" type="password" autoComplete={isRegistering ? 'new-password' : 'current-password'} value={form.password} onChange={update} minLength={6} required /></label>
-        {isRegistering && <label>Badge number<input name="badgeNumber" autoComplete="off" value={form.badgeNumber} onChange={update} placeholder="Optional" /></label>}
+        {isRegistering && <label>Badge number<input name="badgeNumber" autoComplete="off" value={form.badgeNumber} onChange={update} required /></label>}
+        {message && <div className="auth-message" role="status">{message}</div>}
         {error && <div className="auth-error" role="alert">{error}</div>}
-        <button className="auth-submit" disabled={status === 'submitting'}>{status === 'submitting' ? 'Checking credentials...' : isRegistering ? 'Create Account' : 'Enter Control Room'}</button>
+        <button className="auth-submit" disabled={status === 'submitting'}>{status === 'submitting' ? 'Checking credentials...' : isRegistering ? 'Create Account' : 'Send OTP'}</button>
       </form>
     </section>
   </main>;

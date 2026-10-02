@@ -8,9 +8,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -22,8 +22,8 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
     private final OperatorNotificationService notificationService;
-    private final SecureRandom secureRandom = new SecureRandom();
     private static final Pattern SOUTH_AFRICAN_CELLPHONE = Pattern.compile("^\\+27[6-8]\\d{8}$");
+    private static final String OTP_SENT_MESSAGE = "A 6-digit verification code has been sent to your registered phone number.";
     private final Duration otpExpiration;
     private final Duration resendCooldown;
     private final int maxResends;
@@ -81,11 +81,10 @@ public class AuthService {
         notificationService.sendRegistrationConfirmation(user);
         OtpChallengeResponse challenge = createAndSendOtp(user);
         return new RegistrationResponse(
-                "Registration successful. " + challenge.message(),
+                challenge.message(),
                 UserDto.fromEntity(user),
                 challenge.challengeId(),
-                challenge.expiresAt(),
-                challenge.developmentOtp()
+                challenge.expiresAt()
         );
     }
 
@@ -117,7 +116,7 @@ public class AuthService {
         }
 
         challenge.setAttempts(challenge.getAttempts() + 1);
-        if (!passwordEncoder.matches(request.code(), challenge.getCodeHash())) {
+        if (!isOtpValid(challenge, request.code())) {
             otpChallengeRepository.save(challenge);
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid verification code");
         }
@@ -141,26 +140,23 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Verification code resend limit reached");
         }
         Instant now = Instant.now();
-        if (now.isBefore(challenge.getExpiresAt())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "You can request a new verification code after the current code expires");
-        }
         if (challenge.getLastSentAt() != null && now.isBefore(challenge.getLastSentAt().plus(resendCooldown))) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Please wait before requesting another verification code");
         }
 
-        String code = generateOtpCode();
-        challenge.setCodeHash(passwordEncoder.encode(code));
+        OtpDeliveryResult delivery = notificationService.sendOtp(challenge.getUser());
+        ensureOtpDelivered(delivery);
+        challenge.setCodeHash(passwordEncoder.encode(UUID.randomUUID().toString()));
+        challenge.setProviderChallengeId(delivery.providerChallengeId());
         challenge.setExpiresAt(now.plus(otpExpiration));
         challenge.setAttempts(0);
         challenge.setResendCount(challenge.getResendCount() + 1);
         challenge.setLastSentAt(now);
         challenge = otpChallengeRepository.save(challenge);
-        OtpDeliveryResult delivery = notificationService.sendOtp(challenge.getUser(), code);
         return new OtpChallengeResponse(
                 challenge.getChallengeId(),
-                otpMessage(delivery, "A new verification code"),
-                challenge.getExpiresAt(),
-                delivery.partiallyDelivered() ? null : code
+                OTP_SENT_MESSAGE,
+                challenge.getExpiresAt()
         );
     }
 
@@ -171,38 +167,49 @@ public class AuthService {
     }
 
     private OtpChallengeResponse createAndSendOtp(User user) {
-        String code = generateOtpCode();
+        OtpDeliveryResult delivery = notificationService.sendOtp(user);
+        ensureOtpDelivered(delivery);
+        invalidateUnusedChallenges(user);
         OtpChallenge challenge = new OtpChallenge(
                 UUID.randomUUID().toString(),
                 user,
-                passwordEncoder.encode(code),
+                passwordEncoder.encode(UUID.randomUUID().toString()),
                 Instant.now().plus(otpExpiration)
         );
+        challenge.setProviderChallengeId(delivery.providerChallengeId());
         challenge = otpChallengeRepository.save(challenge);
-        OtpDeliveryResult delivery = notificationService.sendOtp(user, code);
         return new OtpChallengeResponse(
                 challenge.getChallengeId(),
-                otpMessage(delivery, "Verification code"),
-                challenge.getExpiresAt(),
-                delivery.partiallyDelivered() ? null : code
+                OTP_SENT_MESSAGE,
+                challenge.getExpiresAt()
         );
     }
 
-    private String otpMessage(OtpDeliveryResult delivery, String prefix) {
-        if (delivery.fullyDelivered()) {
-            return prefix + " sent to your registered email and South African cellphone number.";
+    private void ensureOtpDelivered(OtpDeliveryResult delivery) {
+        if (!delivery.smsSent()) {
+            String message = delivery.failureMessage() == null || delivery.failureMessage().isBlank()
+                    ? "Verification code could not be sent by SMS. Check Infobip 2FA settings and try again."
+                    : delivery.failureMessage();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, message);
         }
-        if (delivery.emailSent()) {
-            return prefix + " sent to your registered email. SMS delivery to your South African cellphone number is not configured or failed.";
-        }
-        if (delivery.smsSent()) {
-            return prefix + " sent by SMS to your South African cellphone number. Email delivery is not configured or failed.";
-        }
-        return prefix + " could not be delivered by email or SMS. Use the development OTP shown below.";
     }
 
-    private String generateOtpCode() {
-        return String.format("%06d", secureRandom.nextInt(1_000_000));
+    private boolean isOtpValid(OtpChallenge challenge, String code) {
+        if (challenge.getProviderChallengeId() != null && !challenge.getProviderChallengeId().isBlank()) {
+            return notificationService.verifyOtp(challenge.getProviderChallengeId(), code);
+        }
+        return passwordEncoder.matches(code, challenge.getCodeHash());
+    }
+
+    private void invalidateUnusedChallenges(User user) {
+        List<OtpChallenge> activeChallenges = otpChallengeRepository.findByUserAndUsedAtIsNull(user);
+        Instant now = Instant.now();
+        for (OtpChallenge activeChallenge : activeChallenges) {
+            activeChallenge.setUsedAt(now);
+        }
+        if (!activeChallenges.isEmpty()) {
+            otpChallengeRepository.saveAll(activeChallenges);
+        }
     }
 
     private String normalizeEmail(String email) {

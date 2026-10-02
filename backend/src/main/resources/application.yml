@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:file:../.env[.properties],optional:file:.env[.properties]
   application:
     name: skysentinel-security
   datasource:
@@ -36,8 +38,9 @@ skysentinel:
     otp-resend-cooldown-seconds: ${OTP_RESEND_COOLDOWN_SECONDS:30}
     otp-max-resends: ${OTP_MAX_RESENDS:3}
     otp-max-attempts: ${OTP_MAX_ATTEMPTS:5}
-  notifications:
-    email:
-      from: ${NOTIFICATION_EMAIL_FROM:no-reply@skysentinel.local}
-    sms:
-      webhook-url: ${SMS_WEBHOOK_URL:}
+  infobip:
+    api-key: ${INFOBIP_API_KEY:}
+    base-url: ${INFOBIP_BASE_URL:}
+    two-factor:
+      application-id: ${INFOBIP_2FA_APPLICATION_ID:}
+      message-id: ${INFOBIP_2FA_MESSAGE_ID:}

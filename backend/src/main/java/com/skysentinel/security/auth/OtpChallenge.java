@@ -21,6 +21,9 @@ public class OtpChallenge {
     @Column(nullable = false, name = "code_hash")
     private String codeHash;
 
+    @Column(name = "provider_challenge_id")
+    private String providerChallengeId;
+
     @Column(nullable = false, name = "expires_at")
     private Instant expiresAt;
 
@@ -55,6 +58,8 @@ public class OtpChallenge {
     public User getUser() { return user; }
     public String getCodeHash() { return codeHash; }
     public void setCodeHash(String codeHash) { this.codeHash = codeHash; }
+    public String getProviderChallengeId() { return providerChallengeId; }
+    public void setProviderChallengeId(String providerChallengeId) { this.providerChallengeId = providerChallengeId; }
     public Instant getExpiresAt() { return expiresAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
     public Instant getUsedAt() { return usedAt; }

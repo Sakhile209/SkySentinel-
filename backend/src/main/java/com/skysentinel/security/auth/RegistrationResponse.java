@@ -6,6 +6,5 @@ public record RegistrationResponse(
         String message,
         UserDto user,
         String challengeId,
-        Instant expiresAt,
-        String developmentOtp
+        Instant expiresAt
 ) {}

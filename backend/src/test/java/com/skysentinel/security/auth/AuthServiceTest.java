@@ -1,18 +1,16 @@
 package com.skysentinel.security.auth;
 
 import com.skysentinel.security.config.JwtTokenService;
-import org.springframework.beans.factory.ObjectProvider;
 import org.junit.jupiter.api.Test;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.lang.reflect.Proxy;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -43,9 +41,10 @@ class AuthServiceTest {
 
         assertThat(response.challengeId()).isNotBlank();
         assertThat(response.expiresAt()).isNotNull();
-        assertThat(response.message()).contains("registered email and South African cellphone");
-        assertThat(notificationService.sentCode.get()).matches("\\d{6}");
+        assertThat(response.message()).isEqualTo("A 6-digit verification code has been sent to your registered phone number.");
+        assertThat(notificationService.sentTo.get()).isEqualTo("+27821234567");
         assertThat(savedChallenge.get().getUser()).isSameAs(savedUser.get());
+        assertThat(savedChallenge.get().getProviderChallengeId()).isEqualTo("pin-123");
         assertThat(savedUser.get().getCellphoneNumber()).isEqualTo("+27821234567");
     }
 
@@ -60,9 +59,9 @@ class AuthServiceTest {
         OtpChallengeResponse challengeResponse = service.login(new LoginRequest(user.getEmail(), "secret123"));
 
         assertThat(challengeResponse.challengeId()).isNotBlank();
-        assertThat(notificationService.sentCode.get()).matches("\\d{6}");
+        assertThat(notificationService.sentTo.get()).isEqualTo(user.getCellphoneNumber());
 
-        AuthResponse authResponse = service.verifyOtp(new VerifyOtpRequest(challengeResponse.challengeId(), notificationService.sentCode.get()));
+        AuthResponse authResponse = service.verifyOtp(new VerifyOtpRequest(challengeResponse.challengeId(), "123456"));
 
         assertThat(authResponse.token()).isNotBlank();
         assertThat(authResponse.user().email()).isEqualTo(user.getEmail());
@@ -70,7 +69,22 @@ class AuthServiceTest {
     }
 
     @Test
-    void resendIsBlockedUntilCurrentOtpExpires() {
+    void loginRequiresSmsDelivery() {
+        notificationService.deliveryResult.set(OtpDeliveryResult.failed("Verification code could not be sent by SMS."));
+        AuthService service = serviceWithOtpExpiryMinutes(
+                5,
+                userRepository(operator()),
+                otpChallengeRepository(new AtomicReference<>())
+        );
+
+        assertThatThrownBy(() -> service.login(new LoginRequest("ops@skysentinel.test", "secret123")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("could not be sent by SMS");
+    }
+
+
+    @Test
+    void resendIsRateLimitedByCooldown() {
         OtpChallenge challenge = new OtpChallenge(
                 "challenge-123",
                 operator(),
@@ -78,11 +92,21 @@ class AuthServiceTest {
                 java.time.Instant.now().plusSeconds(300)
         );
         AtomicReference<OtpChallenge> savedChallenge = new AtomicReference<>(challenge);
-        AuthService service = serviceWithOtpExpiryMinutes(5, userRepository(challenge.getUser()), otpChallengeRepository(savedChallenge));
+        AuthService service = new AuthService(
+                userRepository(challenge.getUser()),
+                otpChallengeRepository(savedChallenge),
+                passwordEncoder,
+                jwtTokenService,
+                notificationService,
+                5,
+                30,
+                3,
+                5
+        );
 
         assertThatThrownBy(() -> service.resendOtp(new ResendOtpRequest("challenge-123")))
                 .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("after the current code expires");
+                .hasMessageContaining("Please wait before requesting another verification code");
     }
 
     @Test
@@ -159,10 +183,12 @@ class AuthServiceTest {
                 (proxy, method, args) -> switch (method.getName()) {
                     case "findByChallengeId" -> Optional.ofNullable(savedChallenge.get())
                             .filter(challenge -> challenge.getChallengeId().equals(args[0]));
+                    case "findByUserAndUsedAtIsNull" -> List.of();
                     case "save" -> {
                         savedChallenge.set((OtpChallenge) args[0]);
                         yield args[0];
                     }
+                    case "saveAll" -> args[0];
                     default -> throw new UnsupportedOperationException(method.getName());
                 }
         );
@@ -182,48 +208,23 @@ class AuthServiceTest {
     }
 
     private static class CapturingNotificationService extends OperatorNotificationService {
-        private final AtomicReference<String> sentCode = new AtomicReference<>();
+        private final AtomicReference<String> sentTo = new AtomicReference<>();
+        private final AtomicReference<OtpDeliveryResult> deliveryResult = new AtomicReference<>(OtpDeliveryResult.delivered("pin-123"));
 
         private CapturingNotificationService() {
-            super(new EmptyMailProvider(), RestClient.builder(), "no-reply@skysentinel.test", "", "");
+            super(RestClient.builder(), "api-key", "https://example.infobip.com", "app-123", "message-123");
         }
 
         @Override
-        public OtpDeliveryResult sendOtp(User user, String code) {
-            sentCode.set(code);
-            return new OtpDeliveryResult(true, true);
+        public OtpDeliveryResult sendOtp(User user) {
+            sentTo.set(user.getCellphoneNumber());
+            return deliveryResult.get();
+        }
+
+        @Override
+        public boolean verifyOtp(String providerChallengeId, String code) {
+            return "pin-123".equals(providerChallengeId) && "123456".equals(code);
         }
     }
 
-    private static class EmptyMailProvider implements ObjectProvider<JavaMailSender> {
-        @Override
-        public JavaMailSender getObject(Object... args) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public JavaMailSender getIfAvailable() {
-            return null;
-        }
-
-        @Override
-        public JavaMailSender getIfUnique() {
-            return null;
-        }
-
-        @Override
-        public JavaMailSender getObject() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Stream<JavaMailSender> stream() {
-            return Stream.empty();
-        }
-
-        @Override
-        public Stream<JavaMailSender> orderedStream() {
-            return Stream.empty();
-        }
-    }
 }

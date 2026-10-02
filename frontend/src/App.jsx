@@ -75,7 +75,10 @@ function loadStoredAuth() {
 }
 
 function getPayloadMessage(payload, fallback) {
-  return payload?.message || payload?.error || fallback;
+  if (payload?.message) return payload.message;
+  if (payload?.error && payload.error !== 'Bad Request') return payload.error;
+  const fieldError = payload?.errors?.[0]?.defaultMessage || payload?.errors?.[0]?.message;
+  return fieldError || fallback;
 }
 
 function secondsUntil(value) {
@@ -119,13 +122,20 @@ function AuthenticationScreen({ onAuthenticated }) {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(getPayloadMessage(payload, 'Authentication failed'));
       if (isRegistering) {
-        setMode('login');
-        setMessage(payload.message || 'Registration confirmed. Sign in to receive your verification code.');
-        setForm(value => ({ ...value, password: '' }));
-      } else {
+        if (!payload.challengeId) {
+          throw new Error('Registration succeeded, but no verification challenge was returned. Please sign in to request an OTP.');
+        }
         setChallenge(payload);
         setOtpCode('');
-        setMessage(payload.message || 'Verification code sent to your registered email and cellphone.');
+        setMessage(payload.message || 'Registration successful. Verification code sent to your registered email and South African cellphone number.');
+        setForm(value => ({ ...value, password: '' }));
+      } else {
+        if (!payload.challengeId) {
+          throw new Error('Sign in requires a verification OTP before access can be granted. Please request a new OTP.');
+        }
+        setChallenge(payload);
+        setOtpCode('');
+        setMessage(payload.message || 'Verification code sent to your registered email and South African cellphone number.');
       }
       setStatus('idle');
     } catch (err) {
@@ -189,7 +199,7 @@ function AuthenticationScreen({ onAuthenticated }) {
       <section className="auth-brand">
         <div className="brand"><div className="brand-symbol"><Icon name="shield" size={44}/></div><div><div><b>SKYSENTINEL</b> <span>SECURITY</span></div><small>Two-step operator verification</small></div></div>
         <h1>Verify Operator Sign In</h1>
-        <p>Enter the 6-digit code sent to your registered email and cellphone number. The code expires in 5 minutes and can only be used once.</p>
+        <p>Enter the 6-digit code sent to your registered email and South African cellphone number. The code expires in 5 minutes and can only be used once.</p>
         <div className="auth-status-grid">
           <span><b>OTP required</b><small>Control Room access starts only after verification.</small></span>
           <span><b>Single use</b><small>Expired or used codes cannot create a session.</small></span>
@@ -200,6 +210,7 @@ function AuthenticationScreen({ onAuthenticated }) {
           <h2 id="otp-title">Verification code</h2>
           <p className="auth-copy">{otpSeconds > 0 ? `Code expires in ${Math.floor(otpSeconds / 60)}:${String(otpSeconds % 60).padStart(2, '0')}` : 'This verification code has expired.'}</p>
           <label>6-digit OTP<input name="otp" inputMode="numeric" pattern="\d{6}" autoComplete="one-time-code" value={otpCode} onChange={event => setOtpCode(event.target.value.replace(/\D/g, '').slice(0, 6))} required /></label>
+          {challenge.developmentOtp && <div className="auth-message" role="status">Development OTP PIN: <b>{challenge.developmentOtp}</b></div>}
           {message && <div className="auth-message" role="status">{message}</div>}
           {error && <div className="auth-error" role="alert">{error}</div>}
           <button className="auth-submit" disabled={status === 'verifying' || otpCode.length !== 6}>{status === 'verifying' ? 'Verifying...' : 'Verify and Enter Control Room'}</button>
@@ -231,7 +242,7 @@ function AuthenticationScreen({ onAuthenticated }) {
         <h2 id="auth-title">{isRegistering ? 'Create operator account' : 'Operator sign in'}</h2>
         {isRegistering && <label>Full name<input name="fullName" autoComplete="name" value={form.fullName} onChange={update} required /></label>}
         <label>Email<input name="email" type="email" autoComplete="email" value={form.email} onChange={update} required /></label>
-        {isRegistering && <label>Cellphone number<input name="cellphoneNumber" type="tel" autoComplete="tel" value={form.cellphoneNumber} onChange={update} required /></label>}
+        {isRegistering && <label>South African cellphone number<input name="cellphoneNumber" type="tel" autoComplete="tel" placeholder="0821234567 or +27821234567" value={form.cellphoneNumber} onChange={update} required /></label>}
         <label>Password<input name="password" type="password" autoComplete={isRegistering ? 'new-password' : 'current-password'} value={form.password} onChange={update} minLength={6} required /></label>
         {isRegistering && <label>Badge number<input name="badgeNumber" autoComplete="off" value={form.badgeNumber} onChange={update} required /></label>}
         {message && <div className="auth-message" role="status">{message}</div>}

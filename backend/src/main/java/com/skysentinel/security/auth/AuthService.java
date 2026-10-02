@@ -12,6 +12,7 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Service
 public class AuthService {
@@ -22,6 +23,7 @@ public class AuthService {
     private final JwtTokenService jwtTokenService;
     private final OperatorNotificationService notificationService;
     private final SecureRandom secureRandom = new SecureRandom();
+    private static final Pattern SOUTH_AFRICAN_CELLPHONE = Pattern.compile("^\\+27[6-8]\\d{8}$");
     private final Duration otpExpiration;
     private final Duration resendCooldown;
     private final int maxResends;
@@ -77,7 +79,14 @@ public class AuthService {
 
         user = userRepository.save(user);
         notificationService.sendRegistrationConfirmation(user);
-        return new RegistrationResponse("Registration successful. Sign in to receive your verification code.", UserDto.fromEntity(user));
+        OtpChallengeResponse challenge = createAndSendOtp(user);
+        return new RegistrationResponse(
+                "Registration successful. " + challenge.message(),
+                UserDto.fromEntity(user),
+                challenge.challengeId(),
+                challenge.expiresAt(),
+                challenge.developmentOtp()
+        );
     }
 
     @Transactional
@@ -146,8 +155,13 @@ public class AuthService {
         challenge.setResendCount(challenge.getResendCount() + 1);
         challenge.setLastSentAt(now);
         challenge = otpChallengeRepository.save(challenge);
-        notificationService.sendOtp(challenge.getUser(), code);
-        return new OtpChallengeResponse(challenge.getChallengeId(), "A new verification code has been sent.", challenge.getExpiresAt());
+        OtpDeliveryResult delivery = notificationService.sendOtp(challenge.getUser(), code);
+        return new OtpChallengeResponse(
+                challenge.getChallengeId(),
+                otpMessage(delivery, "A new verification code"),
+                challenge.getExpiresAt(),
+                delivery.partiallyDelivered() ? null : code
+        );
     }
 
     public UserDto getCurrentUser(String email) {
@@ -165,8 +179,26 @@ public class AuthService {
                 Instant.now().plus(otpExpiration)
         );
         challenge = otpChallengeRepository.save(challenge);
-        notificationService.sendOtp(user, code);
-        return new OtpChallengeResponse(challenge.getChallengeId(), "Verification code sent to your registered email and cellphone.", challenge.getExpiresAt());
+        OtpDeliveryResult delivery = notificationService.sendOtp(user, code);
+        return new OtpChallengeResponse(
+                challenge.getChallengeId(),
+                otpMessage(delivery, "Verification code"),
+                challenge.getExpiresAt(),
+                delivery.partiallyDelivered() ? null : code
+        );
+    }
+
+    private String otpMessage(OtpDeliveryResult delivery, String prefix) {
+        if (delivery.fullyDelivered()) {
+            return prefix + " sent to your registered email and South African cellphone number.";
+        }
+        if (delivery.emailSent()) {
+            return prefix + " sent to your registered email. SMS delivery to your South African cellphone number is not configured or failed.";
+        }
+        if (delivery.smsSent()) {
+            return prefix + " sent by SMS to your South African cellphone number. Email delivery is not configured or failed.";
+        }
+        return prefix + " could not be delivered by email or SMS. Use the development OTP shown below.";
     }
 
     private String generateOtpCode() {
@@ -178,6 +210,19 @@ public class AuthService {
     }
 
     private String normalizeCellphone(String cellphoneNumber) {
-        return cellphoneNumber.replaceAll("\\s+", "").trim();
+        String digits = cellphoneNumber.replaceAll("[^0-9+]", "").trim();
+        if (digits.startsWith("00")) {
+            digits = "+" + digits.substring(2);
+        }
+        if (digits.startsWith("0")) {
+            digits = "+27" + digits.substring(1);
+        }
+        if (!digits.startsWith("+") && digits.startsWith("27")) {
+            digits = "+" + digits;
+        }
+        if (!SOUTH_AFRICAN_CELLPHONE.matcher(digits).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a valid South African cellphone number, for example +27821234567 or 0821234567");
+        }
+        return digits;
     }
 }

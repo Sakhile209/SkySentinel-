@@ -20,16 +20,19 @@ public class OperatorNotificationService {
     private final JavaMailSender mailSender;
     private final RestClient restClient;
     private final String fromEmail;
+    private final String smtpHost;
     private final String smsWebhookUrl;
 
     public OperatorNotificationService(
             ObjectProvider<JavaMailSender> mailSender,
             RestClient.Builder restClientBuilder,
             @Value("${skysentinel.notifications.email.from:no-reply@skysentinel.local}") String fromEmail,
+            @Value("${spring.mail.host:}") String smtpHost,
             @Value("${skysentinel.notifications.sms.webhook-url:}") String smsWebhookUrl) {
         this.mailSender = mailSender.getIfAvailable();
         this.restClient = restClientBuilder.build();
         this.fromEmail = fromEmail;
+        this.smtpHost = smtpHost;
         this.smsWebhookUrl = smsWebhookUrl;
     }
 
@@ -42,16 +45,17 @@ public class OperatorNotificationService {
         sendEmail(user.getEmail(), subject, message);
     }
 
-    public void sendOtp(User user, String code) {
+    public OtpDeliveryResult sendOtp(User user, String code) {
         String message = "Your SkySentinel verification code is " + code + ". It expires shortly and can only be used once.";
-        sendEmail(user.getEmail(), "SkySentinel sign-in verification code", message);
-        sendSms(user.getCellphoneNumber(), message);
+        boolean emailSent = sendEmail(user.getEmail(), "SkySentinel sign-in verification code", message);
+        boolean smsSent = sendSms(user.getCellphoneNumber(), message);
+        return new OtpDeliveryResult(emailSent, smsSent);
     }
 
-    private void sendEmail(String to, String subject, String body) {
-        if (mailSender == null) {
+    private boolean sendEmail(String to, String subject, String body) {
+        if (mailSender == null || smtpHost == null || smtpHost.isBlank()) {
             log.warn("Email provider is not configured. Intended email to {} with subject: {}", to, subject);
-            return;
+            return false;
         }
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(fromEmail);
@@ -60,15 +64,17 @@ public class OperatorNotificationService {
         message.setText(body);
         try {
             mailSender.send(message);
+            return true;
         } catch (RuntimeException ex) {
             log.warn("Email delivery failed for {} with subject: {}", to, subject, ex);
+            return false;
         }
     }
 
-    private void sendSms(String to, String body) {
+    private boolean sendSms(String to, String body) {
         if (smsWebhookUrl == null || smsWebhookUrl.isBlank()) {
             log.warn("SMS provider is not configured. Intended SMS to {}: {}", to, body);
-            return;
+            return false;
         }
         try {
             restClient.post()
@@ -77,8 +83,10 @@ public class OperatorNotificationService {
                     .body(Map.of("to", to, "message", body))
                     .retrieve()
                     .toBodilessEntity();
+            return true;
         } catch (RestClientException ex) {
             log.warn("SMS delivery failed for {}", to, ex);
+            return false;
         }
     }
 }

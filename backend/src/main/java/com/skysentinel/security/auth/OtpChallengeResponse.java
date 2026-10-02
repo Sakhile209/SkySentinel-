@@ -5,5 +5,6 @@ import java.time.Instant;
 public record OtpChallengeResponse(
         String challengeId,
         String message,
-        Instant expiresAt
+        Instant expiresAt,
+        String developmentOtp
 ) {}

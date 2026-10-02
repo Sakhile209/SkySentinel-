@@ -23,6 +23,33 @@ class AuthServiceTest {
     private final CapturingNotificationService notificationService = new CapturingNotificationService();
 
     @Test
+    void registrationSendsOtpChallengeBeforeAccess() {
+        AtomicReference<User> savedUser = new AtomicReference<>();
+        AtomicReference<OtpChallenge> savedChallenge = new AtomicReference<>();
+        AuthService service = serviceWithOtpExpiryMinutes(
+                5,
+                registeringUserRepository(savedUser),
+                otpChallengeRepository(savedChallenge)
+        );
+
+        RegistrationResponse response = service.register(new RegisterRequest(
+                "Ava Operator",
+                "ops@skysentinel.test",
+                "082 123 4567",
+                "OP-101",
+                "secret123",
+                null
+        ));
+
+        assertThat(response.challengeId()).isNotBlank();
+        assertThat(response.expiresAt()).isNotNull();
+        assertThat(response.message()).contains("registered email and South African cellphone");
+        assertThat(notificationService.sentCode.get()).matches("\\d{6}");
+        assertThat(savedChallenge.get().getUser()).isSameAs(savedUser.get());
+        assertThat(savedUser.get().getCellphoneNumber()).isEqualTo("+27821234567");
+    }
+
+    @Test
     void loginRequiresOtpBeforeIssuingJwt() {
         User user = operator();
         AtomicReference<OtpChallenge> savedChallenge = new AtomicReference<>();
@@ -58,6 +85,26 @@ class AuthServiceTest {
                 .hasMessageContaining("after the current code expires");
     }
 
+    @Test
+    void registrationRejectsNonSouthAfricanCellphoneNumbers() {
+        AuthService service = serviceWithOtpExpiryMinutes(
+                5,
+                registeringUserRepository(new AtomicReference<>()),
+                otpChallengeRepository(new AtomicReference<>())
+        );
+
+        assertThatThrownBy(() -> service.register(new RegisterRequest(
+                "Ava Operator",
+                "ops@skysentinel.test",
+                "+14155552671",
+                "OP-101",
+                "secret123",
+                null
+        )))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("valid South African cellphone number");
+    }
+
     private AuthService serviceWithOtpExpiryMinutes(long expiryMinutes, UserRepository userRepository, OtpChallengeRepository otpChallengeRepository) {
         return new AuthService(
                 userRepository,
@@ -86,6 +133,25 @@ class AuthServiceTest {
         );
     }
 
+    private UserRepository registeringUserRepository(AtomicReference<User> savedUser) {
+        return (UserRepository) Proxy.newProxyInstance(
+                UserRepository.class.getClassLoader(),
+                new Class<?>[]{UserRepository.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "findByEmail" -> Optional.ofNullable(savedUser.get())
+                            .filter(value -> value.getEmail().equals(args[0]));
+                    case "existsByEmail", "existsByCellphoneNumber" -> false;
+                    case "save" -> {
+                        User user = (User) args[0];
+                        user.setId(1L);
+                        savedUser.set(user);
+                        yield user;
+                    }
+                    default -> throw new UnsupportedOperationException(method.getName());
+                }
+        );
+    }
+
     private OtpChallengeRepository otpChallengeRepository(AtomicReference<OtpChallenge> savedChallenge) {
         return (OtpChallengeRepository) Proxy.newProxyInstance(
                 OtpChallengeRepository.class.getClassLoader(),
@@ -107,7 +173,7 @@ class AuthServiceTest {
                 "ops@skysentinel.test",
                 passwordEncoder.encode("secret123"),
                 "Ava Operator",
-                "+27111222333",
+                "+27821234567",
                 "CONTROL_ROOM_OPERATOR",
                 "OP-101"
         );
@@ -119,12 +185,13 @@ class AuthServiceTest {
         private final AtomicReference<String> sentCode = new AtomicReference<>();
 
         private CapturingNotificationService() {
-            super(new EmptyMailProvider(), RestClient.builder(), "no-reply@skysentinel.test", "");
+            super(new EmptyMailProvider(), RestClient.builder(), "no-reply@skysentinel.test", "", "");
         }
 
         @Override
-        public void sendOtp(User user, String code) {
+        public OtpDeliveryResult sendOtp(User user, String code) {
             sentCode.set(code);
+            return new OtpDeliveryResult(true, true);
         }
     }
 

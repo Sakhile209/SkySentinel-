@@ -208,7 +208,7 @@ npm --prefix frontend test
 npm --prefix frontend run build
 # Check Compose syntax without printing resolved secrets.
 docker compose config --quiet
-```
+```.
 
 `verify` requires a running Docker daemon and fails if Docker is unavailable;
 it does not silently skip the database integration test. If using Docker Desktop

@@ -188,7 +188,7 @@ npm ci
 npm run dev
 ```
 
-Open the URL printed by Vite (normally http://localhost:5173). If the backend
+Open the URL printed by Vite (normally `http://localhost:5173`). If the backend
 port changed, use `API_PROXY_TARGET=http://127.0.0.1:YOUR_PORT npm run dev`.
 The browser requests `/api/health` on its own origin; the development proxy
 forwards it to Spring Boot, so broad CORS access is unnecessary.

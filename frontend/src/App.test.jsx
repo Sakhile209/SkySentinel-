@@ -5,7 +5,7 @@ import App from './App.jsx';
 
 const operator = { id: 1, email: 'ops@skysentinel.test', fullName: 'Ava Operator', role: 'CONTROL_ROOM_OPERATOR', badgeNumber: 'OP-101' };
 const authResponse = { token: 'signed.jwt.token', user: operator };
-const otpResponse = (overrides = {}) => ({ challengeId: 'challenge-123', message: 'Verification code sent to your registered email and South African cellphone number.', expiresAt: new Date(Date.now() + 300000).toISOString(), ...overrides });
+const otpResponse = (overrides = {}) => ({ challengeId: 'challenge-123', message: 'A 6-digit verification code has been sent to your registered phone number.', expiresAt: new Date(Date.now() + 300000).toISOString(), ...overrides });
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -17,7 +17,7 @@ function mockAuthenticatedFetch(healthResponse = { ok: true, json: async () => (
   vi.stubGlobal('fetch', vi.fn(async (url) => {
     if (url === '/api/auth/login') return { ok: true, json: async () => otpResponse() };
     if (url === '/api/auth/verify-otp') return { ok: true, json: async () => authResponse };
-    if (url === '/api/auth/register') return { ok: true, json: async () => ({ ...otpResponse(), message: 'Registration successful. Verification code sent to your registered email and South African cellphone number.', user: operator }) };
+    if (url === '/api/auth/register') return { ok: true, json: async () => ({ ...otpResponse(), user: operator }) };
     if (url === '/api/auth/me') return { ok: true, json: async () => operator };
     if (url === '/api/health') return healthResponse;
     if (String(url).startsWith('https://api.open-meteo.com/')) return { ok: true, json: async () => ({ latitude: -26.2041, longitude: 28.0473, current: { temperature_2m: 21.4, relative_humidity_2m: 48, weather_code: 2, wind_speed_10m: 16.2, time: '2026-10-01T14:30' } }) };
@@ -74,18 +74,20 @@ describe('authentication gate', () => {
     expect(fetch).toHaveBeenCalledWith('/api/auth/me', expect.objectContaining({ headers: { Authorization: 'Bearer signed.jwt.token' } }));
   });
 
-  it('shows the development OTP PIN when notification delivery is unavailable', async () => {
+  it('does not expose the OTP on screen when notification delivery is unavailable', async () => {
     mockAuthenticatedFetch();
     fetch.mockImplementation(async (url) => {
-      if (url === '/api/auth/login') return { ok: true, json: async () => otpResponse({ message: 'Verification code could not be delivered. Use the development OTP shown below.', developmentOtp: '654321' }) };
+      if (url === '/api/auth/login') return { ok: false, status: 503, json: async () => ({ message: 'Verification code could not be sent by SMS. Check Infobip 2FA settings and try again.' }) };
       return { ok: false, status: 404, json: async () => ({ message: 'Not found' }) };
     });
     render(<App />);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ops@skysentinel.test' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send OTP' }));
-    expect(await screen.findByText('Development OTP PIN:')).toBeInTheDocument();
-    expect(screen.getByText('654321')).toBeInTheDocument();
+    expect(await screen.findByText('Verification code could not be sent by SMS. Check Infobip 2FA settings and try again.')).toBeInTheDocument();
+    expect(screen.queryByText('Verification code')).not.toBeInTheDocument();
+    expect(screen.queryByText(/OTP PIN/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('654321')).not.toBeInTheDocument();
     expect(screen.queryByText('SECURITY OPERATIONS CENTRE')).not.toBeInTheDocument();
   });
 
@@ -115,7 +117,7 @@ describe('authentication gate', () => {
     fireEvent.change(screen.getByLabelText('Badge number'), { target: { value: 'OP-101' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
     await screen.findByText('Verification code');
-    expect(screen.getByText('Registration successful. Verification code sent to your registered email and South African cellphone number.')).toBeInTheDocument();
+    expect(screen.getByText('A 6-digit verification code has been sent to your registered phone number.')).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith('/api/auth/register', expect.objectContaining({ method: 'POST' }));
     expect(screen.queryByText('SECURITY OPERATIONS CENTRE')).not.toBeInTheDocument();
   });

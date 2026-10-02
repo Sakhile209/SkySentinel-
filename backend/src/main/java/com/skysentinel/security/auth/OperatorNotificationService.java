@@ -71,7 +71,7 @@ public class OperatorNotificationService {
             return OtpDeliveryResult.delivered(pinId);
         } catch (RestClientResponseException ex) {
             log.warn("Infobip 2FA SMS delivery failed for {} with status {}", user.getCellphoneNumber(), ex.getStatusCode().value());
-            return OtpDeliveryResult.failed("Verification code could not be sent by SMS. Check Infobip credentials, application, message template, and phone number.");
+            return OtpDeliveryResult.failed(infobipSendFailureMessage(ex.getStatusCode().value()));
         } catch (RuntimeException ex) {
             log.warn("Infobip 2FA SMS delivery failed for {}", user.getCellphoneNumber(), ex);
             return OtpDeliveryResult.failed("Verification code could not be sent by SMS. Check Infobip connectivity and try again.");
@@ -118,6 +118,15 @@ public class OperatorNotificationService {
             return "Infobip 2FA is not configured. Set INFOBIP_2FA_MESSAGE_ID in .env and restart the backend.";
         }
         return null;
+    }
+
+    private String infobipSendFailureMessage(int statusCode) {
+        return switch (statusCode) {
+            case 401, 403 -> "Infobip rejected the SMS request. Check INFOBIP_API_KEY permissions and account access.";
+            case 404 -> "Infobip 2FA application or message template was not found. Check INFOBIP_2FA_APPLICATION_ID and INFOBIP_2FA_MESSAGE_ID.";
+            case 429 -> "Infobip SMS rate limit reached. Wait before requesting another OTP or check your Infobip quota and throttling settings.";
+            default -> "Verification code could not be sent by SMS. Check Infobip credentials, application, message template, and phone number.";
+        };
     }
 
     private String normalizedBaseUrl() {

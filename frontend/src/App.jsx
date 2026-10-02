@@ -6,6 +6,7 @@ import DemoFeed from './components/DemoFeed.jsx';
 import { incidents, drones, teams } from './data/demo.js';
 
 const AUTH_STORAGE_KEY = 'skysentinel.auth';
+const OTP_SENT_MESSAGE = 'A 6-digit verification code has been sent to your registered phone number.';
 const navigation = [['Dashboard','dashboard','dashboard'],['Live Map','map','map'],['Incidents','alert','incidents'],['Drones','drone','fleet'],['Missions','mission','missions'],['Response Teams','team','teams'],['Sites','site'],['Panic Buttons','pin'],['Users','team'],['Reports','report'],['Evidence','evidence'],['Audit Log','report'],['Settings','settings']];
 const badgeColor = value => ['HIGH','NEW'].includes(value) ? 'red' : ['MEDIUM','CHARGING','DISPATCHED'].includes(value) ? 'amber' : ['AVAILABLE','COMPLETED','LOW'].includes(value) ? 'green' : 'cyan';
 function Badge({ value }) { return <span className={`badge ${badgeColor(value)}`}>{value.replaceAll('_',' ')}</span>; }
@@ -127,7 +128,7 @@ function AuthenticationScreen({ onAuthenticated }) {
         }
         setChallenge(payload);
         setOtpCode('');
-        setMessage(payload.message || 'Registration successful. Verification code sent to your registered email and South African cellphone number.');
+        setMessage(payload.message || OTP_SENT_MESSAGE);
         setForm(value => ({ ...value, password: '' }));
       } else {
         if (!payload.challengeId) {
@@ -135,7 +136,7 @@ function AuthenticationScreen({ onAuthenticated }) {
         }
         setChallenge(payload);
         setOtpCode('');
-        setMessage(payload.message || 'Verification code sent to your registered email and South African cellphone number.');
+        setMessage(payload.message || OTP_SENT_MESSAGE);
       }
       setStatus('idle');
     } catch (err) {
@@ -187,7 +188,7 @@ function AuthenticationScreen({ onAuthenticated }) {
       if (!response.ok) throw new Error(getPayloadMessage(payload, 'Unable to resend verification code'));
       setChallenge(payload);
       setOtpCode('');
-      setMessage(payload.message || 'A new verification code has been sent.');
+      setMessage(payload.message || OTP_SENT_MESSAGE);
       setStatus('idle');
     } catch (err) {
       setError(err.message || 'Unable to resend verification code');
@@ -199,7 +200,7 @@ function AuthenticationScreen({ onAuthenticated }) {
       <section className="auth-brand">
         <div className="brand"><div className="brand-symbol"><Icon name="shield" size={44}/></div><div><div><b>SKYSENTINEL</b> <span>SECURITY</span></div><small>Two-step operator verification</small></div></div>
         <h1>Verify Operator Sign In</h1>
-        <p>Enter the 6-digit code sent to your registered email and South African cellphone number. The code expires in 5 minutes and can only be used once.</p>
+        <p>Enter the 6-digit code sent by SMS to your registered South African cellphone number. The code expires in 5 minutes and can only be used once.</p>
         <div className="auth-status-grid">
           <span><b>OTP required</b><small>Control Room access starts only after verification.</small></span>
           <span><b>Single use</b><small>Expired or used codes cannot create a session.</small></span>
@@ -210,12 +211,11 @@ function AuthenticationScreen({ onAuthenticated }) {
           <h2 id="otp-title">Verification code</h2>
           <p className="auth-copy">{otpSeconds > 0 ? `Code expires in ${Math.floor(otpSeconds / 60)}:${String(otpSeconds % 60).padStart(2, '0')}` : 'This verification code has expired.'}</p>
           <label>6-digit OTP<input name="otp" inputMode="numeric" pattern="\d{6}" autoComplete="one-time-code" value={otpCode} onChange={event => setOtpCode(event.target.value.replace(/\D/g, '').slice(0, 6))} required /></label>
-          {challenge.developmentOtp && <div className="auth-message" role="status">Development OTP PIN: <b>{challenge.developmentOtp}</b></div>}
           {message && <div className="auth-message" role="status">{message}</div>}
           {error && <div className="auth-error" role="alert">{error}</div>}
           <button className="auth-submit" disabled={status === 'verifying' || otpCode.length !== 6}>{status === 'verifying' ? 'Verifying...' : 'Verify and Enter Control Room'}</button>
           <div className="auth-secondary-actions">
-            <button type="button" onClick={resendOtp} disabled={otpSeconds > 0 || status === 'resending'}>{status === 'resending' ? 'Sending...' : 'Request New OTP'}</button>
+            <button type="button" onClick={resendOtp} disabled={status === 'resending'}>{status === 'resending' ? 'Sending...' : 'Request New OTP'}</button>
             <button type="button" onClick={() => { setChallenge(null); setOtpCode(''); setError(''); setMessage(''); }}>Back to sign in</button>
           </div>
         </form>

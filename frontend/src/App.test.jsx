@@ -62,14 +62,23 @@ describe('authentication gate', () => {
     expect(fetch).not.toHaveBeenCalledWith('/api/health', expect.any(Object));
   });
 
-  it('signs in and stores the returned operator session', async () => {
+  it('does not restore a stale session and requires fresh sign in before access', () => {
+    window.localStorage.setItem('skysentinel.auth', JSON.stringify(authResponse));
+    mockAuthenticatedFetch();
+    render(<App />);
+    expect(screen.getByRole('button', { name: 'Send OTP' })).toBeInTheDocument();
+    expect(screen.queryByText('SECURITY OPERATIONS CENTRE')).not.toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalledWith('/api/auth/me', expect.any(Object));
+  });
+
+  it('signs in for the current session without keeping a persistent dashboard session', async () => {
     mockAuthenticatedFetch();
     render(<App />);
     await signIn();
     await screen.findByText('Connected — backend and database healthy');
     expect(screen.getByText('SECURITY OPERATIONS CENTRE')).toBeInTheDocument();
     expect(screen.getByText('Ava Operator')).toBeInTheDocument();
-    expect(JSON.parse(window.localStorage.getItem('skysentinel.auth')).token).toBe('signed.jwt.token');
+    expect(window.localStorage.getItem('skysentinel.auth')).toBeNull();
     expect(fetch).toHaveBeenCalledWith('/api/auth/verify-otp', expect.objectContaining({ method: 'POST' }));
     expect(fetch).toHaveBeenCalledWith('/api/auth/me', expect.objectContaining({ headers: { Authorization: 'Bearer signed.jwt.token' } }));
   });

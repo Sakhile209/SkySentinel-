@@ -66,15 +66,6 @@ function WeatherPanel({ location, weather, onRequestLocation }) {
   </div>;
 }
 
-function loadStoredAuth() {
-  try {
-    const stored = window.localStorage.getItem(AUTH_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
-
 function getPayloadMessage(payload, fallback) {
   if (payload?.message) return payload.message;
   if (payload?.error && payload.error !== 'Bad Request') return payload.error;
@@ -166,7 +157,6 @@ function AuthenticationScreen({ onAuthenticated }) {
       if (!response.ok) throw new Error(getPayloadMessage(payload, 'Verification failed'));
       setChallenge(null);
       setOtpCode('');
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload));
       onAuthenticated(payload);
       setStatus('idle');
     } catch (err) {
@@ -254,8 +244,8 @@ function AuthenticationScreen({ onAuthenticated }) {
 }
 
 export default function App() {
-  const [auth, setAuth] = useState(() => loadStoredAuth());
-  const [authState, setAuthState] = useState(() => auth?.token ? 'checking' : 'signed-out');
+  const [auth, setAuth] = useState(null);
+  const [authState, setAuthState] = useState('signed-out');
   const [selected, setSelected] = useState(incidents[0]);
   const [tab, setTab] = useState('Location');
   const [state, setState] = useState('checking');

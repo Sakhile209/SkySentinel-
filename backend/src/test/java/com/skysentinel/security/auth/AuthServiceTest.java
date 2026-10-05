@@ -69,6 +69,37 @@ class AuthServiceTest {
     }
 
     @Test
+    void localDevelopmentFallbackAllowsRegistrationAndOtpVerificationWithoutInfobipConfiguration() {
+        OperatorNotificationService localNotificationService = new OperatorNotificationService(
+                RestClient.builder(),
+                "",
+                "",
+                "",
+                ""
+        );
+        User user = operator();
+        AtomicReference<OtpChallenge> savedChallenge = new AtomicReference<>();
+        AuthService service = new AuthService(
+                userRepository(user),
+                otpChallengeRepository(savedChallenge),
+                passwordEncoder,
+                jwtTokenService,
+                localNotificationService,
+                5,
+                0,
+                3,
+                5
+        );
+
+        OtpChallengeResponse challengeResponse = service.login(new LoginRequest(user.getEmail(), "secret123"));
+        AuthResponse authResponse = service.verifyOtp(new VerifyOtpRequest(challengeResponse.challengeId(), "123456"));
+
+        assertThat(challengeResponse.challengeId()).isNotBlank();
+        assertThat(authResponse.token()).isNotBlank();
+        assertThat(authResponse.user().email()).isEqualTo(user.getEmail());
+    }
+
+    @Test
     void loginRequiresSmsDelivery() {
         notificationService.deliveryResult.set(OtpDeliveryResult.failed("Verification code could not be sent by SMS."));
         AuthService service = serviceWithOtpExpiryMinutes(
@@ -81,7 +112,6 @@ class AuthServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("could not be sent by SMS");
     }
-
 
     @Test
     void resendIsRateLimitedByCooldown() {

@@ -57,7 +57,7 @@ export default function OperationsMap({ location, onRequestLocation }) {
         if (y >= 0 && y < max) {
           tiles.push({
             key: `${zoom}-${x}-${y}`,
-            src: `https://tile.openstreetmap.org/${zoom}/${((x % max) + max) % max}/${y}.png`,
+            src: `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${y}/${((x % max) + max) % max}.jpg`,
             left: col * TILE_SIZE - offsetX,
             top: row * TILE_SIZE - offsetY,
           });
@@ -103,11 +103,11 @@ export default function OperationsMap({ location, onRequestLocation }) {
   const panStep = 0.0035 * (16 - zoom);
 
   return <div className="operations-map real-map">
-    <div className="osm-tiles" aria-label="OpenStreetMap live map centered on your current location">
+    <div className="osm-tiles" aria-label="Satellite live map centered on your current location">
       {mapModel.tiles.map(tile => <img key={tile.key} src={tile.src} alt="" style={{ left: tile.left, top: tile.top }} draggable="false" />)}
       <div className="user-location-marker" aria-label="Your current location"><span /></div>
     </div>
-    <div className="map-label">OPENSTREETMAP · LIVE MAP DATA</div>
+    <div className="map-label">SATELLITE · LIVE MAP DATA</div>
     <div className="map-coordinate-card">
       <b>Your location</b>
       <small>{formatCoord(center.lat, 'lat')} · {formatCoord(center.lng, 'lng')}</small>
@@ -124,6 +124,6 @@ export default function OperationsMap({ location, onRequestLocation }) {
       <button aria-label="Pan east" onClick={() => pan(0, panStep)}>→</button>
       <button aria-label="Pan south" onClick={() => pan(-panStep, 0)}>↓</button>
     </div>
-    <div className="map-legend"><span className="cyan">● Current location</span><span>© OpenStreetMap contributors</span></div>
+    <div className="map-legend"><span className="cyan">● Current location</span><span>© Esri</span></div>
   </div>;
 }

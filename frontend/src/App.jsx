@@ -88,7 +88,10 @@ function AuthenticationScreen({ onAuthenticated }) {
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [challengePurpose, setChallengePurpose] = useState('login');
+  const [newPassword, setNewPassword] = useState('');
   const isRegistering = mode === 'register';
+  const isResettingPassword = mode === 'forgot-password';
   const update = event => setForm(value => ({ ...value, [event.target.name]: event.target.value }));
   useEffect(() => {
     if (!challenge?.expiresAt) return;
@@ -148,6 +151,27 @@ function AuthenticationScreen({ onAuthenticated }) {
       return;
     }
     try {
+      if (challengePurpose === 'reset') {
+        if (!newPassword || newPassword.length < 6) {
+          throw new Error('New password must be at least 6 characters long.');
+        }
+        const response = await fetch('/api/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ challengeId: challenge.challengeId, code: otpCode, newPassword }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(getPayloadMessage(payload, 'Password reset failed'));
+        setChallenge(null);
+        setOtpCode('');
+        setNewPassword('');
+        setMode('login');
+        setChallengePurpose('login');
+        setMessage(payload.message || 'Password reset successfully.');
+        setStatus('idle');
+        return;
+      }
+
       const response = await fetch('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -157,6 +181,7 @@ function AuthenticationScreen({ onAuthenticated }) {
       if (!response.ok) throw new Error(getPayloadMessage(payload, 'Verification failed'));
       setChallenge(null);
       setOtpCode('');
+      setNewPassword('');
       onAuthenticated(payload);
       setStatus('idle');
     } catch (err) {
@@ -186,13 +211,14 @@ function AuthenticationScreen({ onAuthenticated }) {
     }
   };
   if (challenge) {
+    const isPasswordResetFlow = challengePurpose === 'reset';
     return <main className="auth-shell">
       <section className="auth-brand">
-        <div className="brand"><div className="brand-symbol"><Icon name="shield" size={44}/></div><div><div><b>SKYSENTINEL</b> <span>SECURITY</span></div><small>Two-step operator verification</small></div></div>
-        <h1>Verify Operator Sign In</h1>
-        <p>Enter the 6-digit code sent by SMS to your registered South African cellphone number. The code expires in 5 minutes and can only be used once.</p>
+        <div className="brand"><div className="brand-symbol"><Icon name="shield" size={44}/></div><div><div><b>SKYSENTINEL</b> <span>SECURITY</span></div><small>{isPasswordResetFlow ? 'Password recovery' : 'Two-step operator verification'}</small></div></div>
+        <h1>{isPasswordResetFlow ? 'Reset your password' : 'Verify Operator Sign In'}</h1>
+        <p>{isPasswordResetFlow ? 'Enter the code sent to your registered phone number and choose a new password.' : 'Enter the 6-digit code sent by SMS to your registered South African cellphone number. The code expires in 5 minutes and can only be used once.'}</p>
         <div className="auth-status-grid">
-          <span><b>OTP required</b><small>Control Room access starts only after verification.</small></span>
+          <span><b>{isPasswordResetFlow ? 'Secure reset' : 'OTP required'}</b><small>{isPasswordResetFlow ? 'Your account is protected until a new password is confirmed.' : 'Control Room access starts only after verification.'}</small></span>
           <span><b>Single use</b><small>Expired or used codes cannot create a session.</small></span>
         </div>
       </section>
@@ -201,12 +227,60 @@ function AuthenticationScreen({ onAuthenticated }) {
           <h2 id="otp-title">Verification code</h2>
           <p className="auth-copy">{otpSeconds > 0 ? `Code expires in ${Math.floor(otpSeconds / 60)}:${String(otpSeconds % 60).padStart(2, '0')}` : 'This verification code has expired.'}</p>
           <label>6-digit OTP<input name="otp" inputMode="numeric" pattern="\d{6}" autoComplete="one-time-code" value={otpCode} onChange={event => setOtpCode(event.target.value.replace(/\D/g, '').slice(0, 6))} required /></label>
+          {isPasswordResetFlow && <label>New password<input name="newPassword" type="password" autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} minLength={6} required /></label>}
           {message && <div className="auth-message" role="status">{message}</div>}
           {error && <div className="auth-error" role="alert">{error}</div>}
-          <button className="auth-submit" disabled={status === 'verifying' || otpCode.length !== 6}>{status === 'verifying' ? 'Verifying...' : 'Verify and Enter Control Room'}</button>
+          <button className="auth-submit" disabled={status === 'verifying' || otpCode.length !== 6 || (isPasswordResetFlow && newPassword.length < 6)}>{status === 'verifying' ? 'Verifying...' : isPasswordResetFlow ? 'Reset Password' : 'Verify and Enter Control Room'}</button>
           <div className="auth-secondary-actions">
             <button type="button" onClick={resendOtp} disabled={status === 'resending'}>{status === 'resending' ? 'Sending...' : 'Request New OTP'}</button>
-            <button type="button" onClick={() => { setChallenge(null); setOtpCode(''); setError(''); setMessage(''); }}>Back to sign in</button>
+            <button type="button" onClick={() => { setChallenge(null); setOtpCode(''); setNewPassword(''); setError(''); setMessage(''); setMode('login'); setChallengePurpose('login'); }}>Back to sign in</button>
+          </div>
+        </form>
+      </section>
+    </main>;
+  }
+
+  if (isResettingPassword) {
+    return <main className="auth-shell">
+      <section className="auth-brand">
+        <div className="brand"><div className="brand-symbol"><Icon name="shield" size={44}/></div><div><div><b>SKYSENTINEL</b> <span>SECURITY</span></div><small>Password recovery</small></div></div>
+        <h1>Reset your password</h1>
+        <p>Enter the email and registered cellphone number for your account. We will send a verification PIN so you can create a new password.</p>
+      </section>
+      <section className="auth-panel" aria-labelledby="reset-title">
+        <form onSubmit={async event => {
+          event.preventDefault();
+          setStatus('submitting');
+          setError('');
+          setMessage('');
+          try {
+            const response = await fetch('/api/auth/forgot-password', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: form.email, cellphoneNumber: form.cellphoneNumber }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(getPayloadMessage(payload, 'Unable to send password reset OTP'));
+            if (!payload.challengeId) throw new Error('The password reset challenge could not be created.');
+            setChallenge(payload);
+            setChallengePurpose('reset');
+            setOtpCode('');
+            setNewPassword('');
+            setMessage(payload.message || OTP_SENT_MESSAGE);
+            setStatus('idle');
+          } catch (err) {
+            setError(err.message || 'Unable to send password reset OTP');
+            setStatus('idle');
+          }
+        }}>
+          <h2 id="reset-title">Recover account access</h2>
+          <label>Email<input name="email" type="email" autoComplete="email" value={form.email} onChange={update} required /></label>
+          <label>Registered cellphone number<input name="cellphoneNumber" type="tel" autoComplete="tel" placeholder="0821234567 or +27821234567" value={form.cellphoneNumber} onChange={update} required /></label>
+          {message && <div className="auth-message" role="status">{message}</div>}
+          {error && <div className="auth-error" role="alert">{error}</div>}
+          <button className="auth-submit" disabled={status === 'submitting'}>{status === 'submitting' ? 'Sending reset code...' : 'Send reset OTP'}</button>
+          <div className="auth-secondary-actions">
+            <button type="button" onClick={() => { setMode('login'); setError(''); setMessage(''); setForm(value => ({ ...value, cellphoneNumber: '', email: '' })); }}>Back to sign in</button>
           </div>
         </form>
       </section>
@@ -225,7 +299,7 @@ function AuthenticationScreen({ onAuthenticated }) {
     </section>
     <section className="auth-panel" aria-labelledby="auth-title">
       <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
-        <button type="button" role="tab" aria-selected={!isRegistering} onClick={() => { setMode('login'); setError(''); setMessage(''); }}>Sign In</button>
+        <button type="button" role="tab" aria-selected={!isRegistering && !isResettingPassword} onClick={() => { setMode('login'); setError(''); setMessage(''); }}>Sign In</button>
         <button type="button" role="tab" aria-selected={isRegistering} onClick={() => { setMode('register'); setError(''); setMessage(''); }}>Sign Up</button>
       </div>
       <form onSubmit={submit}>
@@ -238,6 +312,7 @@ function AuthenticationScreen({ onAuthenticated }) {
         {message && <div className="auth-message" role="status">{message}</div>}
         {error && <div className="auth-error" role="alert">{error}</div>}
         <button className="auth-submit" disabled={status === 'submitting'}>{status === 'submitting' ? 'Checking credentials...' : isRegistering ? 'Create Account' : 'Send OTP'}</button>
+        {!isRegistering && <button type="button" className="auth-link" onClick={() => { setMode('forgot-password'); setError(''); setMessage(''); }}>Forgot password?</button>}
       </form>
     </section>
   </main>;
@@ -246,6 +321,7 @@ function AuthenticationScreen({ onAuthenticated }) {
 export default function App() {
   const [auth, setAuth] = useState(null);
   const [authState, setAuthState] = useState('signed-out');
+  const [incidentList, setIncidentList] = useState(incidents);
   const [selected, setSelected] = useState(incidents[0]);
   const [tab, setTab] = useState('Location');
   const [state, setState] = useState('checking');
@@ -255,6 +331,9 @@ export default function App() {
   const [activeNav, setActiveNav] = useState('Dashboard');
   const [location, setLocation] = useState({ status: 'idle', coords: null, error: '' });
   const [weather, setWeather] = useState({ status: 'idle', data: null, error: '' });
+  const [droneList, setDroneList] = useState(drones);
+  const [teamList, setTeamList] = useState(teams);
+  const [missions, setMissions] = useState([]);
   const healthCheckId = useRef(0);
   const requestLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -265,15 +344,12 @@ export default function App() {
     setLocation(value => ({ ...value, status: 'requesting', error: '' }));
     navigator.geolocation.getCurrentPosition(
       position => {
-        setLocation({
-          status: 'granted',
-          coords: {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-          },
-          error: '',
-        });
+        const coords = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        };
+        setLocation({ status: 'granted', coords, error: '' });
       },
       error => {
         const denied = error.code === error.PERMISSION_DENIED;
@@ -284,7 +360,7 @@ export default function App() {
         });
         setWeather({ status: 'idle', data: null, error: '' });
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
     );
   }, []);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(timer); }, []);
@@ -330,10 +406,42 @@ export default function App() {
     return () => { clearTimeout(timeout); };
   }, [attempt, authState, auth?.token]);
   useEffect(() => {
-    if (authState === 'signed-in' && location.status === 'idle') {
-      requestLocation();
+    if (authState !== 'signed-in' || !navigator.geolocation) return;
+    if (typeof navigator.geolocation.watchPosition === 'function') {
+      const watchId = navigator.geolocation.watchPosition(
+        position => {
+          const coords = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+          };
+          setLocation(current => {
+            const previous = current.coords || {};
+            if (previous.latitude === coords.latitude && previous.longitude === coords.longitude && previous.accuracy === coords.accuracy) {
+              return current;
+            }
+            return { status: 'granted', coords, error: '' };
+          });
+        },
+        error => {
+          const denied = error.code === error.PERMISSION_DENIED;
+          setLocation({
+            status: denied ? 'denied' : 'error',
+            coords: null,
+            error: denied ? 'Location permission was denied.' : error.message || 'Unable to read current location.',
+          });
+          setWeather({ status: 'idle', data: null, error: '' });
+        },
+        { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+      );
+      return () => {
+        if (typeof navigator.geolocation.clearWatch === 'function') {
+          navigator.geolocation.clearWatch(watchId);
+        }
+      };
     }
-  }, [authState, location.status, requestLocation]);
+    requestLocation();
+  }, [authState, requestLocation]);
   useEffect(() => {
     if (location.status !== 'granted' || !location.coords) return;
     const controller = new AbortController();
@@ -382,6 +490,84 @@ export default function App() {
     setWeather({ status: 'idle', data: null, error: '' });
   };
   const chooseIncident = incident => { setSelected(incident); setTab('Location'); };
+  const handleAcknowledge = () => {
+    const updated = { ...selected, status: 'ACKNOWLEDGED' };
+    setIncidentList(current => current.map(incident => incident.id === updated.id ? updated : incident));
+    setSelected(updated);
+    setNotice(`Incident ${updated.id} acknowledged by ${operator.fullName || 'the operator'}.`);
+  };
+  const handleCreateMission = () => {
+    const mission = { id: `MS-${String(missions.length + 1).padStart(3, '0')}`, site: selected.site, status: 'READY', startedAt: new Date().toISOString() };
+    setMissions(current => [mission, ...current]);
+    setNotice(`Mission ${mission.id} authorized for ${selected.site}.`);
+    setActiveNav('Missions');
+  };
+  const handleDispatchTeam = () => {
+    const nextTeam = teamList.find(team => team.state !== 'DISPATCHED' && team.state !== 'ON_SCENE') || teamList[0];
+    setTeamList(current => current.map(team => team.name === nextTeam.name ? { ...team, state: 'DISPATCHED' } : team));
+    setSelected(current => ({ ...current, status: 'ACTIVE' }));
+    setIncidentList(current => current.map(incident => incident.id === selected.id ? { ...incident, status: 'ACTIVE' } : incident));
+    setNotice(`${nextTeam.name} dispatched to ${selected.site}.`);
+  };
+  const handleQuickAction = action => {
+    if (action === 'New Incident') {
+      const nextIncidentId = `INC-${String(incidentList.reduce((highest, incident) => Math.max(highest, Number.parseInt((incident.id.match(/\d+/)?.[0]) || '0', 10)), 0) + 1).padStart(5, '0')}`;
+      const generated = {
+        id: nextIncidentId,
+        site: 'Field site update',
+        type: 'MANUAL REPORT',
+        priority: 'HIGH',
+        status: 'NEW',
+        time: now.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false }),
+        zone: 'Operator quick action',
+        device: 'Control room',
+        description: 'A new incident was raised from the Quick Actions panel.',
+        x: 53,
+        y: 50,
+      };
+      setIncidentList(current => [generated, ...current]);
+      setSelected(generated);
+      setNotice(`New incident created: ${generated.id}.`);
+      setTab('Location');
+      return;
+    }
+    if (action === 'Register Panic Button') {
+      const panicIncident = {
+        id: `INC-${String(incidentList.reduce((highest, incident) => Math.max(highest, Number.parseInt((incident.id.match(/\d+/)?.[0]) || '0', 10)), 0) + 1).padStart(5, '0')}`,
+        site: 'Panic button registration',
+        type: 'PANIC BUTTON',
+        priority: 'HIGH',
+        status: 'NEW',
+        time: now.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false }),
+        zone: 'Operator initiated activation',
+        device: 'Field panic button',
+        description: 'A new panic button was registered from the dashboard quick actions.',
+        x: 61,
+        y: 42,
+      };
+      setIncidentList(current => [panicIncident, ...current]);
+      setSelected(panicIncident);
+      setNotice(`Panic button registered at ${panicIncident.site}.`);
+      setTab('Location');
+      return;
+    }
+    if (action === 'Add Drone') {
+      const nextDrone = {
+        code: `SS-${String(droneList.length + 1).padStart(3, '0')}`,
+        base: 'Shared base DB-001',
+        battery: 82,
+        state: 'AVAILABLE',
+      };
+      setDroneList(current => [...current, nextDrone]);
+      setNotice(`Drone ${nextDrone.code} added to the fleet.`);
+      return;
+    }
+    if (action === 'Add Site') {
+      const siteName = `Site ${teamList.length + 2}`;
+      setNotice(`${siteName} was added to the monitored site registry.`);
+      setActiveNav('Sites');
+    }
+  };
   const navigate = (name, id) => {
     if (!id) { setNotice(`${name} will be available in a later development phase.`); return; }
     setActiveNav(name);
@@ -407,19 +593,19 @@ export default function App() {
     <main className="workspace">
       <div className="preview-strip"><span><span className="demo-dot"/> DEMO WORKSPACE</span><span>Simulated operational data · Human authorization required</span></div>
       {notice && <div className="notice" role="status">{notice}<button aria-label="Dismiss notice" onClick={() => setNotice('')}>×</button></div>}
-      <div className="stats-grid"><Stat icon="alert" title="Active incidents" value="4" detail="1 awaiting acknowledgement" color="red"/><Stat icon="drone" title="Drones" value={<>2 <em>/ 3</em></>} detail="2 available" color="green"/><Stat icon="mission" title="Active missions" value="0" detail="Awaiting authorization"/><Stat icon="team" title="Response teams" value="4" detail="2 available" color="green"/><Stat icon="site" title="Protected sites" value="5" detail="Shared · Dedicated · No drone"/><Stat icon="pulse" title="System status" value={state === 'connected' ? 'Online' : state === 'checking' ? 'Checking' : 'Offline'} detail={state === 'connected' ? 'Backend & database connected' : 'Check service connection'} color={state === 'connected' ? 'green' : 'amber'}/></div>
+      <div className="stats-grid"><Stat icon="alert" title="Active incidents" value={String(incidentList.length)} detail={`${incidentList.filter(incident => incident.status === 'NEW').length} awaiting acknowledgement`} color="red"/><Stat icon="drone" title="Drones" value={<>{droneList.filter(drone => drone.state === 'AVAILABLE').length} <em>/ {droneList.length}</em></>} detail={`${droneList.filter(drone => drone.state === 'AVAILABLE').length} available`} color="green"/><Stat icon="mission" title="Active missions" value={String(missions.length)} detail={missions.length ? 'Telemetry authorized' : 'Awaiting authorization'}/><Stat icon="team" title="Response teams" value={String(teamList.length)} detail={`${teamList.filter(team => team.state === 'AVAILABLE').length} available`} color="green"/><Stat icon="site" title="Protected sites" value="5" detail="Shared · Dedicated · No drone"/><Stat icon="pulse" title="System status" value={state === 'connected' ? 'Online' : state === 'checking' ? 'Checking' : 'Offline'} detail={state === 'connected' ? 'Backend & database connected' : 'Check service connection'} color={state === 'connected' ? 'green' : 'amber'}/></div>
       <div className="main-grid">
-        <Panel title="Live incidents" id="incidents" action={<span className="panel-meta">4 open</span>}><div className="incident-list">{incidents.map(incident => <button key={incident.id} className={`incident-card ${selected.id === incident.id ? 'incident-selected' : ''}`} onClick={() => chooseIncident(incident)} aria-pressed={selected.id === incident.id}><span className={`incident-icon ${badgeColor(incident.priority)}`}><Icon name="alert" size={24}/></span><span className="incident-copy"><b>{incident.site}</b><small>{incident.type}</small></span><span className="incident-status"><Badge value={incident.priority}/><time>{incident.time}</time><small className={badgeColor(incident.status)}>{incident.status}</small></span></button>)}</div><div className="panel-bottom"><span className="red">●</span> Operator acknowledgement required</div></Panel>
+        <Panel title="Live incidents" id="incidents" action={<span className="panel-meta">{incidentList.length} open</span>}><div className="incident-list">{incidentList.map(incident => <button key={incident.id} className={`incident-card ${selected.id === incident.id ? 'incident-selected' : ''}`} onClick={() => chooseIncident(incident)} aria-pressed={selected.id === incident.id}><span className={`incident-icon ${badgeColor(incident.priority)}`}><Icon name="alert" size={24}/></span><span className="incident-copy"><b>{incident.site}</b><small>{incident.type}</small></span><span className="incident-status"><Badge value={incident.priority}/><time>{incident.time}</time><small className={badgeColor(incident.status)}>{incident.status}</small></span></button>)}</div><div className="panel-bottom"><span className="red">●</span> Operator acknowledgement required</div></Panel>
         <Panel title="Live map" id="map" className="map-panel" action={<span className="panel-meta">{location.status === 'granted' ? 'Current location' : 'Location required'} <button className="map-filter" onClick={requestLocation}>Refresh location</button></span>}><OperationsMap location={location} onRequestLocation={requestLocation}/></Panel>
-        <Panel title="Selected incident" className="details-panel" action={<Badge value={selected.priority}/>}><div className="selected-banner"><Icon name="alert" size={29}/><div><h3>{selected.site}</h3><small>{selected.type}</small></div><span>{selected.id}</span></div><dl className="incident-details"><dt>Site:</dt><dd>{selected.site}</dd><dt>Location:</dt><dd>{selected.zone}</dd><dt>Device:</dt><dd>{selected.device}</dd><dt>Time:</dt><dd>Demo event · {selected.time}:32</dd><dt>Priority:</dt><dd><Badge value={selected.priority}/></dd><dt>Status:</dt><dd><Badge value={selected.status}/></dd><dt>Description:</dt><dd>{selected.description}</dd></dl><div className="incident-actions"><button disabled className="danger">Acknowledge</button><button disabled>Create Mission</button><button disabled className="success">Dispatch Team</button></div><p className="action-hint">Preview only · Operational actions are not enabled</p><div className="tabs" role="tablist" aria-label="Incident details">{['Location','Notes','Evidence','History'].map(name => <button role="tab" id={`tab-${name}`} aria-controls="incident-tab-panel" aria-selected={tab === name} key={name} onClick={() => setTab(name)}>{name}</button>)}</div><div role="tabpanel" id="incident-tab-panel" aria-labelledby={`tab-${tab}`} className="tab-content">{tab === 'Location' ? <div className="location-preview"><Icon name="pin" size={27}/><div><b>{selected.zone}</b><small>{selected.site} · Illustrative location</small></div></div> : tab === 'Notes' ? 'No operator notes in this preview.' : tab === 'Evidence' ? 'No evidence attached. Camera preview is illustrative only.' : `${selected.time} · Demo incident presented for operator review.`}</div></Panel>
+        <Panel title="Selected incident" className="details-panel" action={<Badge value={selected.priority}/>}><div className="selected-banner"><Icon name="alert" size={29}/><div><h3>{selected.site}</h3><small>{selected.type}</small></div><span>{selected.id}</span></div><dl className="incident-details"><dt>Site:</dt><dd>{selected.site}</dd><dt>Location:</dt><dd>{selected.zone}</dd><dt>Device:</dt><dd>{selected.device}</dd><dt>Time:</dt><dd>Demo event · {selected.time}:32</dd><dt>Priority:</dt><dd><Badge value={selected.priority}/></dd><dt>Status:</dt><dd><Badge value={selected.status}/></dd><dt>Description:</dt><dd>{selected.description}</dd></dl><div className="incident-actions"><button onClick={handleAcknowledge} className="danger">Acknowledge</button><button onClick={handleCreateMission}>Create Mission</button><button onClick={handleDispatchTeam} className="success">Dispatch Team</button></div><p className="action-hint">Quick action executed from the active incident.</p><div className="tabs" role="tablist" aria-label="Incident details">{['Location','Notes','Evidence','History'].map(name => <button role="tab" id={`tab-${name}`} aria-controls="incident-tab-panel" aria-selected={tab === name} key={name} onClick={() => setTab(name)}>{name}</button>)}</div><div role="tabpanel" id="incident-tab-panel" aria-labelledby={`tab-${tab}`} className="tab-content">{tab === 'Location' ? <div className="location-preview"><Icon name="pin" size={27}/><div><b>{selected.zone}</b><small>{selected.site} · Illustrative location</small></div></div> : tab === 'Notes' ? 'No operator notes in this preview.' : tab === 'Evidence' ? 'No evidence attached. Camera preview is illustrative only.' : `${selected.time} · Demo incident presented for operator review.`}</div></Panel>
       </div>
       <div className="operations-grid">
-        <Panel title="Drone fleet" id="fleet" action={<span className="panel-meta">3 simulated</span>}>{drones.map(drone => <div className="resource-row" key={drone.code}><Icon name="drone" size={34}/><div className="resource-name"><b>{drone.code}</b><small>{drone.base}</small></div><span className={drone.battery < 40 ? 'amber' : 'green'}>▰ {drone.battery}%</span><Badge value={drone.state}/></div>)}<div className="fleet-summary"><span>Manufacturer-independent simulation</span><small>No physical aircraft connected</small></div></Panel>
-        <Panel title="Active missions" id="missions" action={<span className="panel-meta">Human authorized</span>}><div className="mission-empty"><span className="mission-emblem"><Icon name="mission" size={32}/></span><h3>No active observation missions</h3><p>An operator must review an incident and explicitly authorize a mission.</p><span className="subtle-tag">NO AUTOMATIC LAUNCH</span></div></Panel>
-        <Panel title="Response teams" id="teams" action={<span className="panel-meta">4 teams</span>}>{teams.map(team => <div className="resource-row team-row" key={team.name}><Icon name="car" size={28}/><div className="resource-name"><b>{team.name}</b><small>{team.zone}</small></div><Badge value={team.state}/></div>)}</Panel>
+        <Panel title="Drone fleet" id="fleet" action={<span className="panel-meta">{droneList.length} simulated</span>}>{droneList.map(drone => <div className="resource-row" key={drone.code}><Icon name="drone" size={34}/><div className="resource-name"><b>{drone.code}</b><small>{drone.base}</small></div><span className={drone.battery < 40 ? 'amber' : 'green'}>▰ {drone.battery}%</span><Badge value={drone.state}/></div>)}<div className="fleet-summary"><span>Manufacturer-independent simulation</span><small>No physical aircraft connected</small></div></Panel>
+        <Panel title="Active missions" id="missions" action={<span className="panel-meta">{missions.length ? 'Human authorized' : 'Awaiting authorization'}</span>}>{missions.length ? missions.map(mission => <div className="resource-row" key={mission.id}><Icon name="mission" size={30}/><div className="resource-name"><b>{mission.id}</b><small>{mission.site}</small></div><Badge value={mission.status}/></div>) : <div className="mission-empty"><span className="mission-emblem"><Icon name="mission" size={32}/></span><h3>No active observation missions</h3><p>An operator must review an incident and explicitly authorize a mission.</p><span className="subtle-tag">NO AUTOMATIC LAUNCH</span></div>}</Panel>
+        <Panel title="Response teams" id="teams" action={<span className="panel-meta">{teamList.length} teams</span>}>{teamList.map(team => <div className="resource-row team-row" key={team.name}><Icon name="car" size={28}/><div className="resource-name"><b>{team.name}</b><small>{team.zone}</small></div><Badge value={team.state}/></div>)}</Panel>
         <Panel title="Live drone feed" action={<span className="preview-badge">● DEMO</span>}><div className="feed-layout"><DemoFeed/><dl className="telemetry"><dt>Battery</dt><dd>76%</dd><dt>Altitude</dt><dd>—</dd><dt>Speed</dt><dd>—</dd><dt>Status</dt><dd className="cyan">PREVIEW</dd><dt>Signal</dt><dd>Not connected</dd></dl></div><div className="feed-footer"><span><Icon name="evidence"/> Camera placeholder</span><span className="green">SIMULATED</span></div></Panel>
       </div>
-      <div className="bottom-grid"><Panel title="Recent activity"><ul className="activity-list"><li><time>19:14</time><span>Panic event preview · PB-WH-002</span><small>Demo</small></li><li><time>19:14</time><span>Incident shown · INC-10024</span><small>Demo</small></li><li><time>18:03</time><span>Perimeter alarm · Facility D</span><small>Demo</small></li><li><time>17:24</time><span>Response Team 02 · On scene</span><small>Demo</small></li></ul></Panel><Panel title="System alerts"><div className="system-alert"><Icon name="alert"/><div><b>High-priority incident</b><small>Warehouse B requires operator review</small></div></div><div className="system-alert amber"><Icon name="drone"/><div><b>SS-003 battery at 38%</b><small>Charging at dedicated base DB-002</small></div></div><div className={`system-alert ${state === 'connected' ? 'green' : 'amber'}`}><Icon name="shield"/><div><b role="status">{state === 'connected' ? 'Connected — backend and database healthy' : state === 'checking' ? 'Checking connection…' : 'Connection unavailable — check backend and database'}</b><button className="text-button" disabled={state === 'checking'} onClick={() => setAttempt(value => value + 1)}>Check again</button></div></div></Panel><Panel title="Live weather" action={<span className="panel-meta">{weather.status === 'ready' ? 'Current location' : 'Location based'}</span>}><WeatherPanel location={location} weather={weather} onRequestLocation={requestLocation}/></Panel><Panel title="Quick actions"><div className="quick-actions">{['New Incident','Register Panic Button','Add Drone','Add Site'].map(label => <button disabled key={label}>{label}</button>)}</div><small className="quick-hint">Available in later phases</small></Panel></div>
+      <div className="bottom-grid"><Panel title="Recent activity"><ul className="activity-list"><li><time>19:14</time><span>Panic event preview · PB-WH-002</span><small>Demo</small></li><li><time>19:14</time><span>Incident shown · INC-10024</span><small>Demo</small></li><li><time>18:03</time><span>Perimeter alarm · Facility D</span><small>Demo</small></li><li><time>17:24</time><span>Response Team 02 · On scene</span><small>Demo</small></li></ul></Panel><Panel title="System alerts"><div className="system-alert"><Icon name="alert"/><div><b>High-priority incident</b><small>Warehouse B requires operator review</small></div></div><div className="system-alert amber"><Icon name="drone"/><div><b>SS-003 battery at 38%</b><small>Charging at dedicated base DB-002</small></div></div><div className={`system-alert ${state === 'connected' ? 'green' : 'amber'}`}><Icon name="shield"/><div><b role="status">{state === 'connected' ? 'Connected — backend and database healthy' : state === 'checking' ? 'Checking connection…' : 'Connection unavailable — check backend and database'}</b><button className="text-button" disabled={state === 'checking'} onClick={() => setAttempt(value => value + 1)}>Check again</button></div></div></Panel><Panel title="Live weather" action={<span className="panel-meta">{weather.status === 'ready' ? 'Current location' : 'Location based'}</span>}><WeatherPanel location={location} weather={weather} onRequestLocation={requestLocation}/></Panel><Panel title="Quick actions"><div className="quick-actions">{['New Incident','Register Panic Button','Add Drone','Add Site'].map(label => <button key={label} onClick={() => handleQuickAction(label)}>{label}</button>)}</div><small className="quick-hint">Live dashboard actions update the current incident and fleet state.</small></Panel></div>
       <footer className="workspace-footer"><span>SKYSENTINEL SECURITY <span> / </span> OPERATIONS PREVIEW</span><span>People in control. Always.</span></footer>
     </main>
   </div>;

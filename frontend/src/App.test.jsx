@@ -188,7 +188,7 @@ describe('location-based operations platform', () => {
     mockAuthenticatedFetch();
     render(<App />);
     await signIn();
-    expect(await screen.findByLabelText('OpenStreetMap live map centered on your current location')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Satellite live map centered on your current location')).toBeInTheDocument();
     expect(await screen.findByText('21°C')).toBeInTheDocument();
     expect(screen.getByText('Partly cloudy')).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining('https://api.open-meteo.com/v1/forecast?'), expect.any(Object));
@@ -203,14 +203,25 @@ describe('location-based operations platform', () => {
     expect(screen.getByText(/Enable location permission to load live weather/)).toBeInTheDocument();
   });
 
-  it('keeps operational actions disabled in the demo workspace', async () => {
+  it('executes quick actions and incident management controls from the live dashboard', async () => {
     mockAuthenticatedFetch();
     render(<App />);
     await signIn();
     expect(screen.getByText('DEMO WORKSPACE')).toBeInTheDocument();
-    for (const name of ['Acknowledge', 'Create Mission', 'Dispatch Team', 'New Incident']) {
-      expect(screen.getByRole('button', { name, exact: true })).toBeDisabled();
+
+    for (const name of ['New Incident', 'Register Panic Button', 'Add Drone', 'Add Site']) {
+      expect(screen.getByRole('button', { name, exact: true })).not.toBeDisabled();
     }
+
+    fireEvent.click(screen.getByRole('button', { name: 'New Incident', exact: true }));
+    expect(await screen.findByText(/New incident created/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Acknowledge', exact: true }));
+    expect(await screen.findByText(/acknowledged by/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dispatch Team', exact: true }));
+    expect(await screen.findByText('Team 01 dispatched to Field site update.')).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: 'Reports', exact: true }));
     expect(screen.getByText('Reports will be available in a later development phase.')).toBeInTheDocument();
   });

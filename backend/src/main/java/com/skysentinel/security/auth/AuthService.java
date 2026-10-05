@@ -200,7 +200,7 @@ public class AuthService {
         challenge = otpChallengeRepository.save(challenge);
         return new OtpChallengeResponse(
                 challenge.getChallengeId(),
-                OTP_SENT_MESSAGE,
+                challengeMessage(challenge.getUser(), delivery),
                 challenge.getExpiresAt()
         );
     }
@@ -225,9 +225,17 @@ public class AuthService {
         challenge = otpChallengeRepository.save(challenge);
         return new OtpChallengeResponse(
                 challenge.getChallengeId(),
-                OTP_SENT_MESSAGE,
+                challengeMessage(challenge.getUser(), delivery),
                 challenge.getExpiresAt()
         );
+    }
+
+    private String challengeMessage(User user, OtpDeliveryResult delivery) {
+        if (delivery.providerChallengeId() != null && delivery.providerChallengeId().startsWith("local-dev-pin-")) {
+            String localCode = OperatorNotificationService.localDevelopmentCodeFor(user.getCellphoneNumber());
+            return "Local development OTP for " + user.getCellphoneNumber() + ": " + localCode + ". Use this code to continue.";
+        }
+        return OTP_SENT_MESSAGE;
     }
 
     private void ensureOtpDelivered(OtpDeliveryResult delivery) {

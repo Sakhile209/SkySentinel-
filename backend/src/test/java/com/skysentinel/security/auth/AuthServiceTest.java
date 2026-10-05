@@ -130,6 +130,43 @@ class AuthServiceTest {
     }
 
     @Test
+    void localDevelopmentChallengeMessageIncludesTheGeneratedOtpCode() {
+        OperatorNotificationService localNotificationService = new OperatorNotificationService(
+                RestClient.builder(),
+                "",
+                "",
+                "",
+                ""
+        );
+        User user = new User(
+                "local.dev@skysentinel.test",
+                passwordEncoder.encode("secret123"),
+                "Local Dev Operator",
+                "+27601234567",
+                "CONTROL_ROOM_OPERATOR",
+                "OP-303"
+        );
+        UserRepository userRepository = userRepository(user);
+        AtomicReference<OtpChallenge> savedChallenge = new AtomicReference<>();
+        AuthService service = new AuthService(
+                userRepository,
+                otpChallengeRepository(savedChallenge),
+                passwordEncoder,
+                jwtTokenService,
+                localNotificationService,
+                5,
+                0,
+                3,
+                5
+        );
+
+        OtpChallengeResponse challengeResponse = service.login(new LoginRequest(user.getEmail(), "secret123"));
+        String localDevCode = OperatorNotificationService.localDevelopmentCodeFor(user.getCellphoneNumber());
+
+        assertThat(challengeResponse.message()).contains(localDevCode);
+    }
+
+    @Test
     void loginRequiresSmsDelivery() {
         notificationService.deliveryResult.set(OtpDeliveryResult.failed("Verification code could not be sent by SMS."));
         AuthService service = serviceWithOtpExpiryMinutes(

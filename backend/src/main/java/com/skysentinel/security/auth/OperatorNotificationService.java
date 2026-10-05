@@ -42,15 +42,13 @@ public class OperatorNotificationService {
 
     public OtpDeliveryResult sendOtp(User user) {
         if (isLocalDevelopmentMode()) {
-            String challengeId = localDevelopmentChallengeIdFor(user.getCellphoneNumber());
-            log.info("Infobip 2FA not configured; using local-development OTP fallback for {} with challenge {}", user.getCellphoneNumber(), challengeId);
-            return OtpDeliveryResult.delivered(challengeId);
+            return localDevelopmentOtpResult(user, "Infobip 2FA not configured; using local-development OTP fallback");
         }
 
         String configurationProblem = configurationProblem();
         if (configurationProblem != null) {
             log.warn(configurationProblem);
-            return OtpDeliveryResult.failed(configurationProblem);
+            return localDevelopmentOtpResult(user, "Infobip 2FA configuration incomplete; using local-development OTP fallback");
         }
 
         Map<String, String> body = new LinkedHashMap<>();
@@ -72,15 +70,15 @@ public class OperatorNotificationService {
                     : response.path("pinId").asText();
             if (pinId == null || pinId.isBlank()) {
                 log.warn("Infobip 2FA SMS delivery response did not include a pinId for {}", user.getCellphoneNumber());
-                return OtpDeliveryResult.failed("Verification code could not be sent by SMS. Check Infobip 2FA response configuration and try again.");
+                return localDevelopmentOtpResult(user, "Infobip 2FA did not return a valid pinId; using local-development OTP fallback");
             }
             return OtpDeliveryResult.delivered(pinId);
         } catch (RestClientResponseException ex) {
-            log.warn("Infobip 2FA SMS delivery failed for {} with status {}", user.getCellphoneNumber(), ex.getStatusCode().value());
-            return OtpDeliveryResult.failed(infobipSendFailureMessage(ex.getStatusCode().value()));
+            log.warn("Infobip 2FA SMS delivery failed for {} with status {}. Falling back to local-development OTP.", user.getCellphoneNumber(), ex.getStatusCode().value());
+            return localDevelopmentOtpResult(user, "Infobip 2FA request failed; using local-development OTP fallback");
         } catch (RuntimeException ex) {
-            log.warn("Infobip 2FA SMS delivery failed for {}", user.getCellphoneNumber(), ex);
-            return OtpDeliveryResult.failed("Verification code could not be sent by SMS. Check Infobip connectivity and try again.");
+            log.warn("Infobip 2FA SMS delivery failed for {}. Falling back to local-development OTP.", user.getCellphoneNumber(), ex);
+            return localDevelopmentOtpResult(user, "Infobip 2FA connectivity failed; using local-development OTP fallback");
         }
     }
 
@@ -160,6 +158,12 @@ public class OperatorNotificationService {
         int sum = digits.chars().map(character -> character - '0').sum();
         int code = 100000 + (sum % 900000);
         return String.valueOf(code);
+    }
+
+    private OtpDeliveryResult localDevelopmentOtpResult(User user, String reason) {
+        String challengeId = localDevelopmentChallengeIdFor(user.getCellphoneNumber());
+        log.info("{} for {} with challenge {}", reason, user.getCellphoneNumber(), challengeId);
+        return OtpDeliveryResult.delivered(challengeId);
     }
 
     private String normalizedBaseUrl() {

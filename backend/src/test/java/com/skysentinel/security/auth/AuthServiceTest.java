@@ -69,6 +69,25 @@ class AuthServiceTest {
     }
 
     @Test
+    void forgottenPasswordCanBeResetWithOtpAndRegisteredCellphoneNumber() {
+        User user = operator();
+        AtomicReference<OtpChallenge> savedChallenge = new AtomicReference<>();
+        UserRepository userRepository = userRepository(user);
+        OtpChallengeRepository otpChallengeRepository = otpChallengeRepository(savedChallenge);
+        AuthService service = serviceWithOtpExpiryMinutes(5, userRepository, otpChallengeRepository);
+
+        OtpChallengeResponse challengeResponse = service.forgotPassword(new ForgotPasswordRequest(user.getEmail(), user.getCellphoneNumber()));
+
+        assertThat(challengeResponse.challengeId()).isNotBlank();
+        assertThat(notificationService.sentTo.get()).isEqualTo(user.getCellphoneNumber());
+
+        String message = service.resetPassword(new ResetPasswordRequest(challengeResponse.challengeId(), "123456", "new-secret-321"));
+
+        assertThat(message).isEqualTo("Password reset successfully.");
+        assertThat(passwordEncoder.matches("new-secret-321", user.getPasswordHash())).isTrue();
+    }
+
+    @Test
     void localDevelopmentFallbackAllowsRegistrationAndOtpVerificationWithoutInfobipConfiguration() {
         OperatorNotificationService localNotificationService = new OperatorNotificationService(
                 RestClient.builder(),
@@ -77,7 +96,15 @@ class AuthServiceTest {
                 "",
                 ""
         );
-        User user = operator();
+        User user = new User(
+                "ops+other@skysentinel.test",
+                passwordEncoder.encode("secret123"),
+                "Ava Operator",
+                "+27881234567",
+                "CONTROL_ROOM_OPERATOR",
+                "OP-202"
+        );
+        user.setId(2L);
         AtomicReference<OtpChallenge> savedChallenge = new AtomicReference<>();
         AuthService service = new AuthService(
                 userRepository(user),
@@ -92,9 +119,12 @@ class AuthServiceTest {
         );
 
         OtpChallengeResponse challengeResponse = service.login(new LoginRequest(user.getEmail(), "secret123"));
-        AuthResponse authResponse = service.verifyOtp(new VerifyOtpRequest(challengeResponse.challengeId(), "123456"));
+        String localDevCode = OperatorNotificationService.localDevelopmentCodeFor(user.getCellphoneNumber());
+
+        AuthResponse authResponse = service.verifyOtp(new VerifyOtpRequest(challengeResponse.challengeId(), localDevCode));
 
         assertThat(challengeResponse.challengeId()).isNotBlank();
+        assertThat(savedChallenge.get().getProviderChallengeId()).isEqualTo(OperatorNotificationService.localDevelopmentChallengeIdFor(user.getCellphoneNumber()));
         assertThat(authResponse.token()).isNotBlank();
         assertThat(authResponse.user().email()).isEqualTo(user.getEmail());
     }

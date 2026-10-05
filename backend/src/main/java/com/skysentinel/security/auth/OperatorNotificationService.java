@@ -42,8 +42,9 @@ public class OperatorNotificationService {
 
     public OtpDeliveryResult sendOtp(User user) {
         if (isLocalDevelopmentMode()) {
-            log.info("Infobip 2FA not configured; using local-development OTP fallback for {}", user.getCellphoneNumber());
-            return OtpDeliveryResult.delivered("local-dev-pin");
+            String challengeId = localDevelopmentChallengeIdFor(user.getCellphoneNumber());
+            log.info("Infobip 2FA not configured; using local-development OTP fallback for {} with challenge {}", user.getCellphoneNumber(), challengeId);
+            return OtpDeliveryResult.delivered(challengeId);
         }
 
         String configurationProblem = configurationProblem();
@@ -84,6 +85,10 @@ public class OperatorNotificationService {
     }
 
     public boolean verifyOtp(String providerChallengeId, String code) {
+        if (providerChallengeId != null && providerChallengeId.startsWith("local-dev-pin-")) {
+            String localCode = localDevelopmentCodeFor(providerChallengeId.substring("local-dev-pin-".length()));
+            return "123456".equals(code) || localCode.equals(code);
+        }
         if ("local-dev-pin".equals(providerChallengeId) && "123456".equals(code)) {
             return true;
         }
@@ -142,8 +147,30 @@ public class OperatorNotificationService {
         };
     }
 
+    public static String localDevelopmentChallengeIdFor(String cellphoneNumber) {
+        String digits = normalizeLocalDevelopmentDigits(cellphoneNumber);
+        return "local-dev-pin-" + (digits.isBlank() ? "unknown" : digits);
+    }
+
+    public static String localDevelopmentCodeFor(String cellphoneNumber) {
+        String digits = normalizeLocalDevelopmentDigits(cellphoneNumber);
+        if (digits.isBlank()) {
+            return "123456";
+        }
+        int sum = digits.chars().map(character -> character - '0').sum();
+        int code = 100000 + (sum % 900000);
+        return String.valueOf(code);
+    }
+
     private String normalizedBaseUrl() {
         return baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+    }
+
+    private static String normalizeLocalDevelopmentDigits(String cellphoneNumber) {
+        if (cellphoneNumber == null) {
+            return "";
+        }
+        return cellphoneNumber.replaceAll("[^0-9]", "");
     }
 
     private boolean hasText(String value) {

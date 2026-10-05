@@ -101,6 +101,51 @@ public class AuthService {
     }
 
     @Transactional
+    public OtpChallengeResponse forgotPassword(ForgotPasswordRequest request) {
+        String email = normalizeEmail(request.email());
+        String cellphone = normalizeCellphone(request.cellphoneNumber());
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "We could not find an account with that email and cellphone number."));
+
+        if (!user.getCellphoneNumber().equals(cellphone)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The email and cellphone number do not match this account.");
+        }
+
+        return createAndSendOtp(user);
+    }
+
+    @Transactional
+    public String resetPassword(ResetPasswordRequest request) {
+        OtpChallenge challenge = otpChallengeRepository.findByChallengeId(request.challengeId().trim())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid verification challenge"));
+
+        if (challenge.getUsedAt() != null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Verification code has already been used");
+        }
+        if (Instant.now().isAfter(challenge.getExpiresAt())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Verification code has expired");
+        }
+        if (challenge.getAttempts() >= maxAttempts) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many verification attempts");
+        }
+
+        challenge.setAttempts(challenge.getAttempts() + 1);
+        if (!isOtpValid(challenge, request.code())) {
+            otpChallengeRepository.save(challenge);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid verification code");
+        }
+
+        challenge.setUsedAt(Instant.now());
+        otpChallengeRepository.save(challenge);
+
+        User user = challenge.getUser();
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        userRepository.save(user);
+
+        return "Password reset successfully.";
+    }
+
+    @Transactional
     public AuthResponse verifyOtp(VerifyOtpRequest request) {
         OtpChallenge challenge = otpChallengeRepository.findByChallengeId(request.challengeId().trim())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid verification challenge"));

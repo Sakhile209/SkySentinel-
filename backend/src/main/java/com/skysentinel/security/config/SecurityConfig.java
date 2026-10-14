@@ -1,5 +1,6 @@
 package com.skysentinel.security.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -15,6 +16,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Configuration
@@ -23,9 +25,13 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final String allowedOrigins;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+    public SecurityConfig(
+            JwtAuthenticationFilter jwtAuthenticationFilter,
+            @Value("${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://*.vercel.app,https://*.netlify.app}") String allowedOrigins) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.allowedOrigins = allowedOrigins;
     }
 
     @Bean
@@ -72,7 +78,17 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOriginPatterns(List.of("*"));
+        List<String> origins = Arrays.stream(allowedOrigins.split(","))
+            .map(String::trim)
+            .filter(value -> !value.isBlank())
+            .toList();
+
+        if (origins.isEmpty()) {
+            config.setAllowedOriginPatterns(List.of("*"));
+        } else {
+            config.setAllowedOriginPatterns(origins);
+        }
+
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

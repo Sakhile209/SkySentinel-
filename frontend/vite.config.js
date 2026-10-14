@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  base: './',
   server: { proxy: { '/api': process.env.API_PROXY_TARGET || 'http://127.0.0.1:8080' } },
   test: { environment: 'jsdom', setupFiles: './src/test-setup.js', testTimeout: 20000 },
 });

@@ -7,6 +7,8 @@ import { incidents, drones, teams } from './data/demo.js';
 
 const AUTH_STORAGE_KEY = 'skysentinel.auth';
 const OTP_SENT_MESSAGE = 'A 6-digit verification code has been sent to your registered phone number.';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const apiUrl = path => `${API_BASE_URL}${path}`;
 const navigation = [['Dashboard','dashboard','dashboard'],['Live Map','map','map'],['Incidents','alert','incidents'],['Drones','drone','fleet'],['Missions','mission','missions'],['Response Teams','team','teams'],['Sites','site'],['Panic Buttons','pin'],['Users','team'],['Reports','report'],['Evidence','evidence'],['Audit Log','report'],['Settings','settings']];
 const badgeColor = value => ['HIGH','NEW'].includes(value) ? 'red' : ['MEDIUM','CHARGING','DISPATCHED'].includes(value) ? 'amber' : ['AVAILABLE','COMPLETED','LOW'].includes(value) ? 'green' : 'cyan';
 function Badge({ value }) { return <span className={`badge ${badgeColor(value)}`}>{value.replaceAll('_',' ')}</span>; }
@@ -109,7 +111,7 @@ function AuthenticationScreen({ onAuthenticated }) {
       const body = isRegistering
         ? { fullName: form.fullName, email: form.email, cellphoneNumber: form.cellphoneNumber, password: form.password, badgeNumber: form.badgeNumber }
         : { email: form.email, password: form.password };
-      const response = await fetch(`/api/auth/${isRegistering ? 'register' : 'login'}`, {
+      const response = await fetch(apiUrl(`/api/auth/${isRegistering ? 'register' : 'login'}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -155,7 +157,7 @@ function AuthenticationScreen({ onAuthenticated }) {
         if (!newPassword || newPassword.length < 6) {
           throw new Error('New password must be at least 6 characters long.');
         }
-        const response = await fetch('/api/auth/reset-password', {
+        const response = await fetch(apiUrl('/api/auth/reset-password'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ challengeId: challenge.challengeId, code: otpCode, newPassword }),
@@ -172,7 +174,7 @@ function AuthenticationScreen({ onAuthenticated }) {
         return;
       }
 
-      const response = await fetch('/api/auth/verify-otp', {
+      const response = await fetch(apiUrl('/api/auth/verify-otp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ challengeId: challenge.challengeId, code: otpCode }),
@@ -194,7 +196,7 @@ function AuthenticationScreen({ onAuthenticated }) {
     setError('');
     setMessage('');
     try {
-      const response = await fetch('/api/auth/resend-otp', {
+      const response = await fetch(apiUrl('/api/auth/resend-otp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ challengeId: challenge.challengeId }),
@@ -254,7 +256,7 @@ function AuthenticationScreen({ onAuthenticated }) {
           setError('');
           setMessage('');
           try {
-            const response = await fetch('/api/auth/forgot-password', {
+            const response = await fetch(apiUrl('/api/auth/forgot-password'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ email: form.email, cellphoneNumber: form.cellphoneNumber }),
@@ -369,7 +371,7 @@ export default function App() {
     let active = true;
     async function validateSession() {
       try {
-        const response = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${auth.token}` } });
+        const response = await fetch(apiUrl('/api/auth/me'), { headers: { Authorization: `Bearer ${auth.token}` } });
         if (!response.ok) throw new Error();
         const user = await response.json();
         if (!active) return;
@@ -394,7 +396,7 @@ export default function App() {
     setState('checking');
     async function check() {
       try {
-        const response = await fetch('/api/health', { headers: { Authorization: `Bearer ${auth.token}` } });
+        const response = await fetch(apiUrl('/api/health'), { headers: { Authorization: `Bearer ${auth.token}` } });
         if (!response.ok) throw new Error();
         const result = await response.json();
         if (result.status !== 'UP' || result.database !== 'UP') throw new Error();

@@ -1,0 +1,6 @@
+name = "skysentinel-security"
+compatibility_date = "2025-01-01"
+
+[build]
+command = "npm install && npm run build"
+pages_build_output_dir = "./dist"

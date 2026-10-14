@@ -115,6 +115,24 @@ describe('authentication gate', () => {
     expect(screen.queryByText('SECURITY OPERATIONS CENTRE')).not.toBeInTheDocument();
   });
 
+  it('clears stale registration data when switching between sign-in and sign-up modes', () => {
+    mockAuthenticatedFetch();
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Sign Up' }));
+    fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Ava Operator' } });
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ops@skysentinel.test' } });
+    fireEvent.change(screen.getByLabelText('South African cellphone number'), { target: { value: '072626389' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
+    fireEvent.change(screen.getByLabelText('Badge number'), { target: { value: 'OP-101' } });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Sign In' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Sign Up' }));
+
+    expect(screen.getByLabelText('South African cellphone number')).toHaveValue('');
+    expect(screen.getByLabelText('Email')).toHaveValue('');
+  });
+
   it('creates a new operator account and requires OTP verification before access', async () => {
     mockAuthenticatedFetch();
     render(<App />);

@@ -94,6 +94,16 @@ function AuthenticationScreen({ onAuthenticated }) {
   const [newPassword, setNewPassword] = useState('');
   const isRegistering = mode === 'register';
   const isResettingPassword = mode === 'forgot-password';
+  const resetFormForMode = nextMode => {
+    setForm({ fullName: '', email: '', cellphoneNumber: '', password: '', badgeNumber: '' });
+    setChallenge(null);
+    setOtpCode('');
+    setNewPassword('');
+    setError('');
+    setMessage('');
+    setChallengePurpose('login');
+    setMode(nextMode);
+  };
   const update = event => setForm(value => ({ ...value, [event.target.name]: event.target.value }));
   useEffect(() => {
     if (!challenge?.expiresAt) return;
@@ -235,7 +245,7 @@ function AuthenticationScreen({ onAuthenticated }) {
           <button className="auth-submit" disabled={status === 'verifying' || otpCode.length !== 6 || (isPasswordResetFlow && newPassword.length < 6)}>{status === 'verifying' ? 'Verifying...' : isPasswordResetFlow ? 'Reset Password' : 'Verify and Enter Control Room'}</button>
           <div className="auth-secondary-actions">
             <button type="button" onClick={resendOtp} disabled={status === 'resending'}>{status === 'resending' ? 'Sending...' : 'Request New OTP'}</button>
-            <button type="button" onClick={() => { setChallenge(null); setOtpCode(''); setNewPassword(''); setError(''); setMessage(''); setMode('login'); setChallengePurpose('login'); }}>Back to sign in</button>
+            <button type="button" onClick={() => resetFormForMode('login')}>Back to sign in</button>
           </div>
         </form>
       </section>
@@ -282,7 +292,7 @@ function AuthenticationScreen({ onAuthenticated }) {
           {error && <div className="auth-error" role="alert">{error}</div>}
           <button className="auth-submit" disabled={status === 'submitting'}>{status === 'submitting' ? 'Sending reset code...' : 'Send reset OTP'}</button>
           <div className="auth-secondary-actions">
-            <button type="button" onClick={() => { setMode('login'); setError(''); setMessage(''); setForm(value => ({ ...value, cellphoneNumber: '', email: '' })); }}>Back to sign in</button>
+            <button type="button" onClick={() => resetFormForMode('login')}>Back to sign in</button>
           </div>
         </form>
       </section>
@@ -301,14 +311,14 @@ function AuthenticationScreen({ onAuthenticated }) {
     </section>
     <section className="auth-panel" aria-labelledby="auth-title">
       <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
-        <button type="button" role="tab" aria-selected={!isRegistering && !isResettingPassword} onClick={() => { setMode('login'); setError(''); setMessage(''); }}>Sign In</button>
-        <button type="button" role="tab" aria-selected={isRegistering} onClick={() => { setMode('register'); setError(''); setMessage(''); }}>Sign Up</button>
+        <button type="button" role="tab" aria-selected={!isRegistering && !isResettingPassword} onClick={() => resetFormForMode('login')}>Sign In</button>
+        <button type="button" role="tab" aria-selected={isRegistering} onClick={() => resetFormForMode('register')}>Sign Up</button>
       </div>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} autoComplete="off">
         <h2 id="auth-title">{isRegistering ? 'Create operator account' : 'Operator sign in'}</h2>
-        {isRegistering && <label>Full name<input name="fullName" autoComplete="name" value={form.fullName} onChange={update} required /></label>}
-        <label>Email<input name="email" type="email" autoComplete="email" value={form.email} onChange={update} required /></label>
-        {isRegistering && <label>South African cellphone number<input name="cellphoneNumber" type="tel" autoComplete="tel" placeholder="0821234567 or +27821234567" value={form.cellphoneNumber} onChange={update} required /></label>}
+        {isRegistering && <label>Full name<input name="fullName" autoComplete="off" value={form.fullName} onChange={update} required /></label>}
+        <label>Email<input name="email" type="email" autoComplete="off" value={form.email} onChange={update} required /></label>
+        {isRegistering && <label>South African cellphone number<input name="cellphoneNumber" type="tel" autoComplete="off" placeholder="0821234567 or +27821234567" value={form.cellphoneNumber} onChange={update} required /></label>}
         <label>Password<input name="password" type="password" autoComplete={isRegistering ? 'new-password' : 'current-password'} value={form.password} onChange={update} minLength={6} required /></label>
         {isRegistering && <label>Badge number<input name="badgeNumber" autoComplete="off" value={form.badgeNumber} onChange={update} required /></label>}
         {message && <div className="auth-message" role="status">{message}</div>}

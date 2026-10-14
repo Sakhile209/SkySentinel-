@@ -1,0 +1,16 @@
+backend/
+database/
+docs/
+.git/
+.idea/
+.vscode/
+.github/
+.env
+.env.*
+!/.env.example
+*.log
+**/target/
+**/node_modules/
+**/dist/
+**/coverage/
+README.md

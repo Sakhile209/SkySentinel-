@@ -193,6 +193,46 @@ port changed, use `API_PROXY_TARGET=http://127.0.0.1:YOUR_PORT npm run dev`.
 The browser requests `/api/health` on its own origin; the development proxy
 forwards it to Spring Boot, so broad CORS access is unnecessary.
 
+## Cloudflare Pages deployment
+
+Cloudflare Pages is a good fit for the frontend, but the browser upload limit is
+strict: direct uploads exceeding 1,000 files are rejected. The supported fix is
+to deploy the built frontend bundle with Wrangler instead of using the direct
+upload panel.
+
+Prerequisites:
+
+```bash
+cd /home/wtc/Documents/SkySentinel-/frontend
+npm ci
+npm run build
+npm install -g wrangler
+```
+
+Then publish the generated `dist` output:
+
+```bash
+cd /home/wtc/Documents/SkySentinel-/frontend
+wrangler pages deploy dist --project-name skysentinel-security --branch main
+```
+
+Set the production environment variable in Cloudflare Pages:
+
+```text
+VITE_API_BASE_URL=https://your-backend-domain.example.com
+```
+
+If the backend is hosted separately, set the matching CORS origin on the backend
+as well:
+
+```text
+CORS_ALLOWED_ORIGINS=https://skysentinel-security.pages.dev,https://your-custom-domain.com
+```
+
+The frontend does not need a local proxy in production; it should call the live
+backend URL directly. This avoids the blank-screen behavior caused by local-only
+API assumptions and the Pages direct-upload file limit.
+
 ## Tests
 
 From the repository root:
@@ -296,3 +336,5 @@ personnel and applicable approvals. Local demos do not establish flight coverage
 Production deployment also requires authentication, tenant isolation, HTTPS,
 secret management, backups and the planned security review. No real sensitive
 operational data should be added to this Phase 1 foundation.
+
+WTC-PSBTSWFV

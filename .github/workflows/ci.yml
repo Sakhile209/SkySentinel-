@@ -48,9 +48,7 @@ jobs:
 
       - name: Build monorepo
         working-directory: frontend
-        run: |
-          pnpm build
-          mkdir -p ../dist && cp -r dist/* ../dist/ 2>/dev/null || true
+        run: pnpm build
 
       - name: Deploy using Cloudflare Wrangler
         uses: cloudflare/wrangler-action@v3
@@ -58,7 +56,6 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: frontend
-          command: pages deploy dist --project-name=skysentinel-security --branch=main
+          command: pages deploy frontend/dist --project-name=skysentinel
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

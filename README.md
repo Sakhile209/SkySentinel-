@@ -130,6 +130,11 @@ Open **http://localhost:5173**. The dashboard should show **System status: Onlin
 **Connected — backend and database healthy** in System Alerts. The second curl proves the frontend
 proxy reaches the API. The ports are bound to localhost only.
 
+Docker already serves the frontend; you do not need to run `npm run dev` for this
+mode. For frontend hot reload with the Docker backend, run `npm run dev` from
+`frontend` and open the URL Vite prints. If Docker occupies port 5173, Vite uses
+the next available port (usually 5174).
+
 ```bash
 # Diagnose startup problems (redact sensitive values before sharing logs).
 docker compose logs --tail=100 backend postgres frontend
@@ -163,6 +168,7 @@ Do not run the containerized backend/frontend on the same ports as the local app
 Terminal 1, repository root:
 
 ```bash
+docker compose stop frontend backend
 docker compose up -d --wait postgres
 set -a
 source .env
@@ -188,7 +194,8 @@ npm ci
 npm run dev
 ```
 
-Open the URL printed by Vite (normally `http://localhost:5173`). If the backend
+Open the URL printed by Vite (normally `http://localhost:5173`; if occupied, Vite
+automatically tries the next port). If the backend
 port changed, use `API_PROXY_TARGET=http://127.0.0.1:YOUR_PORT npm run dev`.
 The browser requests `/api/health` on its own origin; the development proxy
 forwards it to Spring Boot, so broad CORS access is unnecessary.

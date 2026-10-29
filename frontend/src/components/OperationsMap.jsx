@@ -91,6 +91,15 @@ export default function OperationsMap({ location, onRequestLocation }) {
     </div>;
   }
 
+  if (location?.status === 'error') {
+    return <div className="operations-map real-map map-empty">
+      <Icon name="pin" size={34}/>
+      <h3>Location unavailable</h3>
+      <p>{location.error || 'Unable to read your current location.'}</p>
+      <button onClick={onRequestLocation}>Try location again</button>
+    </div>;
+  }
+
   if (!center || location?.status === 'requesting') {
     return <div className="operations-map real-map map-empty">
       <Icon name="map" size={34}/>

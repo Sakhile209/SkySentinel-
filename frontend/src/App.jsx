@@ -8,7 +8,16 @@ import { incidents, drones, teams } from './data/demo.js';
 const AUTH_STORAGE_KEY = 'skysentinel.auth';
 const OTP_SENT_MESSAGE = 'A 6-digit verification code has been sent to your registered phone number.';
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
-const apiUrl = path => `${API_BASE_URL}${path}`;
+// API paths below already begin with `/api`. Accept either a backend origin or
+// a same-origin `/api` gateway without accidentally requesting `/api/api/...`.
+const API_ORIGIN = API_BASE_URL.endsWith('/api') ? API_BASE_URL.slice(0, -4) : API_BASE_URL;
+const apiUrl = path => `${API_ORIGIN}${path}`;
+const apiUnavailableMessage = API_ORIGIN
+  ? 'Cannot reach the SkySentinel service. Check that the configured backend is running, then try again.'
+  : 'Cannot reach the SkySentinel service. Start Docker Desktop, then run `docker compose up -d --wait` from the project folder and try again.';
+const apiErrorMessage = (error, fallback) => error instanceof TypeError || /networkerror|failed to fetch/i.test(error?.message || '')
+  ? apiUnavailableMessage
+  : error?.message || fallback;
 const navigation = [['Dashboard','dashboard','dashboard'],['Live Map','map','map'],['Incidents','alert','incidents'],['Drones','drone','fleet'],['Missions','mission','missions'],['Response Teams','team','teams'],['Sites','site'],['Panic Buttons','pin'],['Users','team'],['Reports','report'],['Evidence','evidence'],['Audit Log','report'],['Settings','settings']];
 const badgeColor = value => ['HIGH','NEW'].includes(value) ? 'red' : ['MEDIUM','CHARGING','DISPATCHED'].includes(value) ? 'amber' : ['AVAILABLE','COMPLETED','LOW'].includes(value) ? 'green' : 'cyan';
 function Badge({ value }) { return <span className={`badge ${badgeColor(value)}`}>{value.replaceAll('_',' ')}</span>; }
@@ -37,18 +46,21 @@ const weatherCodeText = code => ({
   99: 'Thunderstorm with hail',
 }[code] || 'Weather data available');
 
-function WeatherPanel({ location, weather, onRequestLocation }) {
+function WeatherPanel({ location, weather, onRequestLocation, onRetryWeather }) {
   if (location.status === 'denied') {
     return <div className="weather weather-empty"><Icon name="pin" size={34}/><div><b>Location access required</b><span>Enable location permission to load live weather for your current position.</span><button onClick={onRequestLocation}>Enable Location</button></div></div>;
   }
   if (location.status === 'unsupported') {
     return <div className="weather weather-empty"><Icon name="pin" size={34}/><div><b>Location unavailable</b><span>This browser cannot provide current location, so live local weather cannot be loaded.</span></div></div>;
   }
+  if (location.status === 'error') {
+    return <div className="weather weather-empty"><Icon name="pin" size={34}/><div><b>Location unavailable</b><span>{location.error || 'Unable to read your current location.'}</span><button onClick={onRequestLocation}>Try location again</button></div></div>;
+  }
   if (weather.status === 'loading' || location.status === 'requesting') {
     return <div className="weather weather-empty"><Icon name="cloud" size={34}/><div><b>Loading live weather</b><span>Waiting for current location and weather service response.</span></div></div>;
   }
   if (weather.status === 'error') {
-    return <div className="weather weather-empty"><Icon name="cloud" size={34}/><div><b>Weather unavailable</b><span>{weather.error || 'Unable to load current weather from the weather service.'}</span><button onClick={onRequestLocation}>Retry Location</button></div></div>;
+    return <div className="weather weather-empty"><Icon name="cloud" size={34}/><div><b>Weather unavailable</b><span>{weather.error || 'Unable to load current weather from the weather service.'}</span><button onClick={onRetryWeather}>Retry weather</button><button onClick={onRequestLocation}>Refresh location</button></div></div>;
   }
   if (!weather.data) {
     return <div className="weather weather-empty"><Icon name="cloud" size={34}/><div><b>Location required</b><span>SkySentinel never uses fake weather. Grant location access to load live conditions.</span><button onClick={onRequestLocation}>Enable Location</button></div></div>;
@@ -146,7 +158,7 @@ function AuthenticationScreen({ onAuthenticated }) {
       }
       setStatus('idle');
     } catch (err) {
-      setError(err.message || 'Authentication failed');
+      setError(apiErrorMessage(err, 'Authentication failed'));
       setStatus('idle');
     }
   };
@@ -197,7 +209,7 @@ function AuthenticationScreen({ onAuthenticated }) {
       onAuthenticated(payload);
       setStatus('idle');
     } catch (err) {
-      setError(err.message || 'Verification failed');
+      setError(apiErrorMessage(err, 'Verification failed'));
       setStatus('idle');
     }
   };
@@ -218,7 +230,7 @@ function AuthenticationScreen({ onAuthenticated }) {
       setMessage(payload.message || OTP_SENT_MESSAGE);
       setStatus('idle');
     } catch (err) {
-      setError(err.message || 'Unable to resend verification code');
+      setError(apiErrorMessage(err, 'Unable to resend verification code'));
       setStatus('idle');
     }
   };
@@ -281,7 +293,7 @@ function AuthenticationScreen({ onAuthenticated }) {
             setMessage(payload.message || OTP_SENT_MESSAGE);
             setStatus('idle');
           } catch (err) {
-            setError(err.message || 'Unable to send password reset OTP');
+            setError(apiErrorMessage(err, 'Unable to send password reset OTP'));
             setStatus('idle');
           }
         }}>
@@ -343,6 +355,7 @@ export default function App() {
   const [activeNav, setActiveNav] = useState('Dashboard');
   const [location, setLocation] = useState({ status: 'idle', coords: null, error: '' });
   const [weather, setWeather] = useState({ status: 'idle', data: null, error: '' });
+  const [weatherRequest, setWeatherRequest] = useState(0);
   const [droneList, setDroneList] = useState(drones);
   const [teamList, setTeamList] = useState(teams);
   const [missions, setMissions] = useState([]);
@@ -353,6 +366,8 @@ export default function App() {
       setWeather({ status: 'idle', data: null, error: '' });
       return;
     }
+    // Request a weather refresh even when the browser returns unchanged coordinates.
+    setWeatherRequest(value => value + 1);
     setLocation(value => ({ ...value, status: 'requesting', error: '' }));
     navigator.geolocation.getCurrentPosition(
       position => {
@@ -375,6 +390,7 @@ export default function App() {
       { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
     );
   }, []);
+  const retryWeather = useCallback(() => setWeatherRequest(value => value + 1), []);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(timer); }, []);
   useEffect(() => {
     if (!auth?.token) return;
@@ -457,6 +473,12 @@ export default function App() {
   useEffect(() => {
     if (location.status !== 'granted' || !location.coords) return;
     const controller = new AbortController();
+    let active = true;
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 12000);
     async function loadWeather() {
       setWeather({ status: 'loading', data: null, error: '' });
       try {
@@ -485,14 +507,24 @@ export default function App() {
           },
         });
       } catch (error) {
-        if (error.name !== 'AbortError') {
-          setWeather({ status: 'error', data: null, error: error.message || 'Unable to load live weather.' });
+        if (!active) return;
+        if (error.name === 'AbortError' && timedOut) {
+          setWeather({ status: 'error', data: null, error: 'The live weather request timed out. Please try again.' });
+        } else if (error.name !== 'AbortError') {
+          const message = error instanceof TypeError
+            ? 'Could not reach the live weather service. Check your internet connection and try again.'
+            : error.message || 'Unable to load live weather.';
+          setWeather({ status: 'error', data: null, error: message });
         }
       }
     }
     loadWeather();
-    return () => controller.abort();
-  }, [location.status, location.coords?.latitude, location.coords?.longitude]);
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [location.status, location.coords?.latitude, location.coords?.longitude, weatherRequest]);
   const signOut = () => {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
     setAuth(null);
@@ -617,7 +649,7 @@ export default function App() {
         <Panel title="Response teams" id="teams" action={<span className="panel-meta">{teamList.length} teams</span>}>{teamList.map(team => <div className="resource-row team-row" key={team.name}><Icon name="car" size={28}/><div className="resource-name"><b>{team.name}</b><small>{team.zone}</small></div><Badge value={team.state}/></div>)}</Panel>
         <Panel title="Live drone feed" action={<span className="preview-badge">● DEMO</span>}><div className="feed-layout"><DemoFeed/><dl className="telemetry"><dt>Battery</dt><dd>76%</dd><dt>Altitude</dt><dd>—</dd><dt>Speed</dt><dd>—</dd><dt>Status</dt><dd className="cyan">PREVIEW</dd><dt>Signal</dt><dd>Not connected</dd></dl></div><div className="feed-footer"><span><Icon name="evidence"/> Camera placeholder</span><span className="green">SIMULATED</span></div></Panel>
       </div>
-      <div className="bottom-grid"><Panel title="Recent activity"><ul className="activity-list"><li><time>19:14</time><span>Panic event preview · PB-WH-002</span><small>Demo</small></li><li><time>19:14</time><span>Incident shown · INC-10024</span><small>Demo</small></li><li><time>18:03</time><span>Perimeter alarm · Facility D</span><small>Demo</small></li><li><time>17:24</time><span>Response Team 02 · On scene</span><small>Demo</small></li></ul></Panel><Panel title="System alerts"><div className="system-alert"><Icon name="alert"/><div><b>High-priority incident</b><small>Warehouse B requires operator review</small></div></div><div className="system-alert amber"><Icon name="drone"/><div><b>SS-003 battery at 38%</b><small>Charging at dedicated base DB-002</small></div></div><div className={`system-alert ${state === 'connected' ? 'green' : 'amber'}`}><Icon name="shield"/><div><b role="status">{state === 'connected' ? 'Connected — backend and database healthy' : state === 'checking' ? 'Checking connection…' : 'Connection unavailable — check backend and database'}</b><button className="text-button" disabled={state === 'checking'} onClick={() => setAttempt(value => value + 1)}>Check again</button></div></div></Panel><Panel title="Live weather" action={<span className="panel-meta">{weather.status === 'ready' ? 'Current location' : 'Location based'}</span>}><WeatherPanel location={location} weather={weather} onRequestLocation={requestLocation}/></Panel><Panel title="Quick actions"><div className="quick-actions">{['New Incident','Register Panic Button','Add Drone','Add Site'].map(label => <button key={label} onClick={() => handleQuickAction(label)}>{label}</button>)}</div><small className="quick-hint">Live dashboard actions update the current incident and fleet state.</small></Panel></div>
+      <div className="bottom-grid"><Panel title="Recent activity"><ul className="activity-list"><li><time>19:14</time><span>Panic event preview · PB-WH-002</span><small>Demo</small></li><li><time>19:14</time><span>Incident shown · INC-10024</span><small>Demo</small></li><li><time>18:03</time><span>Perimeter alarm · Facility D</span><small>Demo</small></li><li><time>17:24</time><span>Response Team 02 · On scene</span><small>Demo</small></li></ul></Panel><Panel title="System alerts"><div className="system-alert"><Icon name="alert"/><div><b>High-priority incident</b><small>Warehouse B requires operator review</small></div></div><div className="system-alert amber"><Icon name="drone"/><div><b>SS-003 battery at 38%</b><small>Charging at dedicated base DB-002</small></div></div><div className={`system-alert ${state === 'connected' ? 'green' : 'amber'}`}><Icon name="shield"/><div><b role="status">{state === 'connected' ? 'Connected — backend and database healthy' : state === 'checking' ? 'Checking connection…' : 'Connection unavailable — check backend and database'}</b><button className="text-button" disabled={state === 'checking'} onClick={() => setAttempt(value => value + 1)}>Check again</button></div></div></Panel><Panel title="Live weather" action={<span className="panel-meta">{weather.status === 'ready' ? 'Current location' : 'Location based'}</span>}><WeatherPanel location={location} weather={weather} onRequestLocation={requestLocation} onRetryWeather={retryWeather}/></Panel><Panel title="Quick actions"><div className="quick-actions">{['New Incident','Register Panic Button','Add Drone','Add Site'].map(label => <button key={label} onClick={() => handleQuickAction(label)}>{label}</button>)}</div><small className="quick-hint">Live dashboard actions update the current incident and fleet state.</small></Panel></div>
       <footer className="workspace-footer"><span>SKYSENTINEL SECURITY <span> / </span> OPERATIONS PREVIEW</span><span>People in control. Always.</span></footer>
     </main>
   </div>;

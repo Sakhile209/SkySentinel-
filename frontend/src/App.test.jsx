@@ -100,6 +100,17 @@ describe('authentication gate', () => {
     expect(screen.queryByText('SECURITY OPERATIONS CENTRE')).not.toBeInTheDocument();
   });
 
+  it('explains how to restore the local API when the sign-in request cannot connect', async () => {
+    mockAuthenticatedFetch();
+    fetch.mockImplementation(async () => { throw new TypeError('NetworkError when attempting to fetch resource.'); });
+    render(<App />);
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ops@skysentinel.test' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send OTP' }));
+    expect(await screen.findByText(/Cannot reach the SkySentinel service/)).toBeInTheDocument();
+    expect(screen.getByText(/Start Docker Desktop/)).toBeInTheDocument();
+  });
+
   it('does not accept a login response without an OTP challenge', async () => {
     mockAuthenticatedFetch();
     fetch.mockImplementation(async (url) => {
@@ -219,6 +230,31 @@ describe('location-based operations platform', () => {
     await signIn();
     expect(await screen.findAllByText('Location access required')).toHaveLength(2);
     expect(screen.getByText(/Enable location permission to load live weather/)).toBeInTheDocument();
+  });
+
+  it('retries the weather request when location coordinates have not changed', async () => {
+    mockLocationGranted();
+    mockAuthenticatedFetch();
+    let weatherCalls = 0;
+    fetch.mockImplementation(async (url) => {
+      if (url === '/api/auth/login') return { ok: true, json: async () => otpResponse() };
+      if (url === '/api/auth/verify-otp') return { ok: true, json: async () => authResponse };
+      if (url === '/api/auth/me') return { ok: true, json: async () => operator };
+      if (url === '/api/health') return { ok: true, json: async () => ({ status: 'UP', database: 'UP' }) };
+      if (String(url).startsWith('https://api.open-meteo.com/')) {
+        weatherCalls += 1;
+        if (weatherCalls === 1) throw new TypeError('Failed to fetch');
+        return { ok: true, json: async () => ({ latitude: -26.2041, longitude: 28.0473, current: { temperature_2m: 21.4, relative_humidity_2m: 48, weather_code: 2, wind_speed_10m: 16.2, time: '2026-10-01T14:30' } }) };
+      }
+      return { ok: false, status: 404, json: async () => ({ message: 'Not found' }) };
+    });
+
+    render(<App />);
+    await signIn();
+    expect(await screen.findByText(/Could not reach the live weather service/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry weather' }));
+    expect(await screen.findByText('21°C')).toBeInTheDocument();
+    expect(weatherCalls).toBe(2);
   });
 
   it('executes quick actions and incident management controls from the live dashboard', async () => {

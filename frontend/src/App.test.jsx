@@ -217,7 +217,7 @@ describe('location-based operations platform', () => {
     mockAuthenticatedFetch();
     render(<App />);
     await signIn();
-    expect(await screen.findByLabelText('Satellite live map centered on your current location')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Live map centered on your current location')).toBeInTheDocument();
     expect(await screen.findByText('21°C')).toBeInTheDocument();
     expect(screen.getByText('Partly cloudy')).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining('https://api.open-meteo.com/v1/forecast?'), expect.any(Object));

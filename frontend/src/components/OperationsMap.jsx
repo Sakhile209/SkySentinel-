@@ -58,6 +58,7 @@ export default function OperationsMap({ location, onRequestLocation }) {
           tiles.push({
             key: `${zoom}-${x}-${y}`,
             src: `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${y}/${((x % max) + max) % max}.jpg`,
+            fallbackSrc: `https://tile.openstreetmap.org/${zoom}/${((x % max) + max) % max}/${y}.png`,
             left: col * TILE_SIZE - offsetX,
             top: row * TILE_SIZE - offsetY,
           });
@@ -112,11 +113,15 @@ export default function OperationsMap({ location, onRequestLocation }) {
   const panStep = 0.0035 * (16 - zoom);
 
   return <div className="operations-map real-map">
-    <div className="osm-tiles" aria-label="Satellite live map centered on your current location">
-      {mapModel.tiles.map(tile => <img key={tile.key} src={tile.src} alt="" style={{ left: tile.left, top: tile.top }} draggable="false" />)}
+    <div className="osm-tiles" aria-label="Live map centered on your current location">
+      {mapModel.tiles.map(tile => <img key={tile.key} src={tile.src} alt="" style={{ left: tile.left, top: tile.top }} draggable="false" onError={event => {
+        // Do not leave the location panel blank when the imagery host is unavailable.
+        event.currentTarget.onerror = null;
+        event.currentTarget.src = tile.fallbackSrc;
+      }} />)}
       <div className="user-location-marker" aria-label="Your current location"><span /></div>
     </div>
-    <div className="map-label">SATELLITE · LIVE MAP DATA</div>
+    <div className="map-label">LIVE MAP DATA</div>
     <div className="map-coordinate-card">
       <b>Your location</b>
       <small>{formatCoord(center.lat, 'lat')} · {formatCoord(center.lng, 'lng')}</small>
